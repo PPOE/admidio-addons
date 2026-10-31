@@ -9,7 +9,7 @@ The add-ons run on the same server and use the Admidio database.
 
 | Directory | What | Status |
 |---|---|---|
-| [`mail-alias-sync/`](mail-alias-sync/) | Export of the mail aliases defined by roles | imported as is, not yet ported |
+| [`mail-alias-sync/`](mail-alias-sync/) | Export of the mail aliases defined by roles | imported as is, not yet ported; not fetched since 2018 at the latest |
 
 ### mail-alias-sync
 
@@ -25,6 +25,13 @@ it does not run on current PHP or Admidio 5: it uses the removed `mysql_*` and
 `mcrypt_*` functions and reads `config.php` (DB access and keys; not part of
 this repository). Porting it to PHP 8 and the Admidio 5 schema, with proper
 authentication instead of a public URL, is the next step.
+
+**Status: not in use.** The access logs of the current membership system show
+the alias list being fetched once a day (04:19, `Wget/1.13.4`, i.e. a
+Debian 7 client) until January 2018, the last month of the retained old logs.
+In the retained logs from May to October 2026 it was not fetched at all
+(checked 2026-10-31). No current server is known to fetch it; the aliases on
+the mail server have presumably not been updated from Admidio since then.
 
 ## Rules
 
