@@ -1,27 +1,28 @@
 admidio-addons licensing status
 ===============================
 
-1. Imported code by other authors
+This repository is licensed like Admidio itself, under the GNU General Public
+License version 2 only.
 
-   mail-alias-sync/adm_mail.php was written by another author and imported
-   unchanged from PPOE/admidio-old, which declares no license. It is not
-   licensed under the terms below, or under any other license, unless and until
-   its author confirms otherwise; all rights in it remain with its author.
+   This program is free software; you can redistribute it and/or modify it
+   under the terms of the GNU General Public License version 2 as published by
+   the Free Software Foundation.
 
-2. Contributions by Peter Grassberger (PeterTheOne)
+   This program is distributed in the hope that it will be useful, but WITHOUT
+   ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+   FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
+   more details. A copy of the license is in LICENSES/GPL-2.0-only.txt.
 
-   Copyright (C) 2026 Peter Grassberger (PeterTheOne) <petertheone@gmail.com>
+   SPDX-License-Identifier: GPL-2.0-only
 
-   The contributions of Peter Grassberger (PeterTheOne) to this repository,
-   that is the changes in the commits he authored as recorded in its Git
-   history, are free software: you can redistribute them and/or modify them
-   under the terms of the GNU Affero General Public License as published by
-   the Free Software Foundation, either version 3 of the License, or (at your
-   option) any later version.
+Copyright (C) 2026 Peter Grassberger (PeterTheOne) <petertheone@gmail.com> and
+the other contributors, as recorded in the Git history.
 
-   They are distributed in the hope that they will be useful, but WITHOUT ANY
-   WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
-   FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more
-   details. A copy of the license is in LICENSES/AGPL-3.0-or-later.txt.
+Imported code
+-------------
 
-   SPDX-License-Identifier: AGPL-3.0-or-later
+mail-alias-sync/adm_mail.php was imported unchanged from PPOE/admidio-old, a
+fork of Admidio that is distributed under the GNU General Public License
+version 2 (it ships Admidio's license text). The file itself carries no license
+statement of its own; it is included here under the same terms. Its copyright
+remains with its author, as recorded in the history of PPOE/admidio-old.

@@ -34,4 +34,4 @@ authentication instead of a public URL, is the next step.
 
 ## License
 
-See [LICENSE](LICENSE).
+GNU General Public License version 2 only (GPL-2.0-only), like Admidio. See [LICENSE](LICENSE).
