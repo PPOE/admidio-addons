@@ -12,7 +12,7 @@ The add-ons run on the same server and use the Admidio database.
 | [`mail-alias-sync/`](mail-alias-sync/) | Export of the mail aliases defined by roles | imported as is, not yet ported; not fetched since 2018 at the latest |
 | [`pgacc/`](pgacc/) | Interfaces with the finance application [pgacc](https://github.com/PPOE/pgacc) | old files imported as is, **in use**; the new member list (below) is not deployed yet |
 | [`internal/`](internal/) | Document root of the internal listener: `members.php` only | new, not deployed yet |
-| [`tests/`](tests/) | Tests of the member list (Docker) | |
+| [`tests/`](tests/) | Tests of the add-ons (Docker) | |
 
 ### mail-alias-sync
 
@@ -62,67 +62,97 @@ change in pgacc, is needed before the membership system moves to Admidio 5.
 
 ### Member list for pgacc (sync v2)
 
-Replaces `adm_names.php` (removed). pgacc fetches `members.php` from an internal
-listener of its own (not through the public web server), over TLS:
+Replaces `adm_names.php` (removed). pgacc fetches the active members from
+`members.php` on an internal listener of this side (not through the public
+web server). `internal/members.php` is the only file of that listener's
+document root; the code is in `pgacc/members-api.php`.
 
-- `internal/members.php` is the only file of that listener's document root;
-  the code is in `pgacc/members-api.php`.
-- It answers **403 with an empty body** unless the socket's address
-  (`REMOTE_ADDR`; no forwarded headers) is in the configured peer list **and**
-  the request carries `Authorization: Bearer <token>` with the configured
-  token. A missing or invalid configuration, an empty token or an empty peer
-  list refuse everything. Any error after that: **503 with an empty body**
-  (the log gets only the exception class and code).
-- Otherwise: `200`, `application/json`, ordered by id:
-  `[{"id": 123, "uuid": "…", "name": "First Last", "lo": 38, "paid": 1}, …]`
-  (`lo` may be `null`; `paid` is 0 or 1).
-- The data comes from one prepared `SELECT` on the view `pgacc_members`
-  ([`pgacc/pgacc_members.sql`](pgacc/pgacc_members.sql); its comment lists the
-  rules), read by a database user with `SELECT` on that view only.
+#### Transport and authentication
 
-Deployment (not in this repository):
+- Caller: pgacc. Callee: this side, `https://<internal address>:8443/members.php`.
+- TLS with this side's self-signed certificate (see Certificates); pgacc
+  verifies it against that certificate as its only trust anchor.
+- The request must come from an address in the secrets file's peer list
+  (the socket's `REMOTE_ADDR`; no forwarded headers) **and** carry
+  `Authorization: Bearer <token>` with the secrets file's token (compared
+  with `hash_equals`, never logged). Otherwise: **403 with an empty body**.
+  A missing or invalid secrets file, an empty token or an empty peer list
+  refuse everything.
+- Any error after that: **503 with an empty body** (the log gets only the
+  exception class and code).
+
+#### Data
+
+`200`, `application/json`, ordered by id:
+`[{"id": 123, "uuid": "…", "name": "First Last", "lo": 38, "paid": 1}, …]`
+(`lo` may be `null`; `paid` is 0 or 1; "paid until" today or later counts
+as paid, so "paid until 31 December" is still paid on 31 December). The data
+comes from one prepared `SELECT` on the view `pgacc_members`
+([`pgacc/pgacc_members.sql`](pgacc/pgacc_members.sql); its comment lists the
+rules), read by the database user `'pgacc_members'@'localhost'` with
+`SELECT` on that view only.
+
+#### Secrets file
+
+`/etc/admidio-addons/members-secrets.php`, outside every document root,
+readable by PHP-FPM only; the listener passes its path as the FastCGI
+parameter `PGACC_MEMBERS_SECRETS`:
+
+```php
+<?php return [
+    'token' => '<64 hex characters>',  // openssl rand -hex 32, the same as in pgacc
+    'peers' => ['<pgacc internal address>'],
+    'dsn' => 'mysql:unix_socket=/run/mysqld/mysqld.sock;dbname=<admidio db>;charset=utf8mb4',
+    'user' => 'pgacc_members',
+    'password' => '<reader password>',
+];
+```
+
+#### Listener
+
+An nginx `server` on the internal address only, serving only
+`/members.php`:
+
+```nginx
+server {
+    listen <internal address>:8443 ssl;
+    ssl_certificate     /etc/admidio-addons/sync-tls.crt;   # self-signed, SAN = the address
+    ssl_certificate_key /etc/admidio-addons/sync-tls.key;
+    root /srv/admidio-addons/internal;
+    access_log off;
+    location = /members.php {
+        include fastcgi_params;   # REMOTE_ADDR = the socket's address; no real-IP module here
+        fastcgi_param SCRIPT_FILENAME $document_root/members.php;
+        fastcgi_param PGACC_MEMBERS_SECRETS /etc/admidio-addons/members-secrets.php;
+        fastcgi_pass unix:/run/php/<php-fpm socket>;
+    }
+    location / { return 404; }
+}
+```
+
+#### Certificates
+
+Each side's own certificate is `/etc/<app>/sync-tls.{crt,key}`; the peer's
+certificate is `/etc/<app>/<peer>-tls.crt`. Each certificate is self-signed
+by the callee (SAN = the address in the caller's URL) and handed to the
+caller through the deployment inventory. For this flow: this side's
+`/etc/admidio-addons/sync-tls.{crt,key}`; pgacc keeps the certificate as
+`/etc/pgacc/admidio-addons-tls.crt`.
+
+#### Deployment needs
+
+Not in this repository:
 
 1. Create the reader `'pgacc_members'@'localhost'` with a random password,
    then apply `pgacc/pgacc_members.sql` as an administrator in the Admidio
    database (table prefix `adm`); apply it again after Admidio updates.
-2. A configuration file outside every document root, readable by PHP-FPM
-   only, returning:
-
-   ```php
-   <?php return [
-       'token' => '<64 hex characters>',  // openssl rand -hex 32, the same as in pgacc
-       'peers' => ['<pgacc internal address>'],
-       'dsn' => 'mysql:unix_socket=/run/mysqld/mysqld.sock;dbname=<admidio db>;charset=utf8mb4',
-       'user' => 'pgacc_members',
-       'password' => '<reader password>',
-   ];
-   ```
-
-3. An nginx `server` on the internal address only, serving only
-   `/members.php`, with the path of that file as `PGACC_MEMBERS_CONFIG`:
-
-   ```nginx
-   server {
-       listen <internal address>:8443 ssl;
-       ssl_certificate     /etc/<…>/members-tls.crt;   # self-signed, SAN = the address
-       ssl_certificate_key /etc/<…>/members-tls.key;
-       root /srv/admidio-addons/internal;
-       access_log off;
-       location = /members.php {
-           include fastcgi_params;   # REMOTE_ADDR = the socket's address; no real-IP module here
-           fastcgi_param SCRIPT_FILENAME $document_root/members.php;
-           fastcgi_param PGACC_MEMBERS_CONFIG /etc/<…>/members-config.php;
-           fastcgi_pass unix:/run/php/<php-fpm socket>;
-       }
-       location / { return 404; }
-   }
-   ```
-
-   plus the firewall rules that admit only pgacc's address on that port.
+2. The secrets file, the certificate and the listener above.
+3. The firewall rules that admit only pgacc's address on port 8443.
 
 Tests: `tests/run.sh` (Docker; MariaDB 12.3 with the Admidio 5.0.17 tables
-the view reads, and PHP 8.5; synthetic users only). GitHub Actions runs it on
-every push.
+the add-ons use, their database users and every `pgacc/*.sql`, and PHP 8.5;
+runs each `tests/*-test.php`; synthetic users only). GitHub Actions runs it
+on every push.
 
 ## Rules
 

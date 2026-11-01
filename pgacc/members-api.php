@@ -5,49 +5,49 @@
 // Member list for pgacc (internal/members.php): pgacc fetches the active
 // members as JSON, [{"id": int, "uuid": string, "name": string,
 // "lo": int|null, "paid": 0|1}, ...], from the view pgacc_members
-// (pgacc_members.sql). A request must come from a peer of the configuration
-// file and carry its token ("Authorization: Bearer <token>"); otherwise, and
-// without a valid configuration, it gets 403 with an empty body. Any error
+// (pgacc_members.sql). A request must come from a peer of the secrets file
+// and carry its token ("Authorization: Bearer <token>"); otherwise, and
+// without a valid secrets file, it gets 403 with an empty body. Any error
 // after that answers 503 with an empty body.
 //
-// The configuration file is outside the document root; the web server passes
-// its path as PGACC_MEMBERS_CONFIG. It returns an array:
+// The secrets file (members-secrets.php) is outside the document root; the
+// web server passes its path as PGACC_MEMBERS_SECRETS. It returns an array:
 // ['token' => '<hex>', 'peers' => ['<address>', ...],
 //  'dsn' => 'mysql:unix_socket=...;dbname=...;charset=utf8mb4',
 //  'user' => '<reader>', 'password' => '...'].
 
-// The configuration from $file, or null unless it has a non-empty token and
-// a non-empty peer list.
-function members_api_config($file)
+// The secrets from $file, or null unless they have a non-empty token and a
+// non-empty peer list.
+function members_api_secrets($file)
 {
     if (!is_string($file) || $file === '' || !is_file($file)) {
         return null;
     }
     try {
-        $config = include $file;
+        $secrets = include $file;
     } catch (Throwable $e) {
         return null;
     }
-    if (!is_array($config) || !is_string($config['token'] ?? null) || $config['token'] === ''
-        || !is_array($config['peers'] ?? null) || $config['peers'] === []) {
+    if (!is_array($secrets) || !is_string($secrets['token'] ?? null) || $secrets['token'] === ''
+        || !is_array($secrets['peers'] ?? null) || $secrets['peers'] === []) {
         return null;
     }
-    return $config;
+    return $secrets;
 }
 
-// True if the request ($_SERVER) comes from a configured peer (the socket's
-// address; no forwarded headers) and carries the configured token.
-function members_api_allowed($config, $server)
+// True if the request ($_SERVER) comes from a peer of the secrets (the
+// socket's address; no forwarded headers) and carries their token.
+function members_api_allowed($secrets, $server)
 {
-    return $config !== null
-        && in_array($server['REMOTE_ADDR'] ?? null, $config['peers'], true)
-        && hash_equals('Bearer ' . $config['token'], (string) ($server['HTTP_AUTHORIZATION'] ?? ''));
+    return $secrets !== null
+        && in_array($server['REMOTE_ADDR'] ?? null, $secrets['peers'], true)
+        && hash_equals('Bearer ' . $secrets['token'], (string) ($server['HTTP_AUTHORIZATION'] ?? ''));
 }
 
 // The members, ordered by id. Throws on any database error.
-function members_api_members($config)
+function members_api_members($secrets)
 {
-    $pdo = new PDO($config['dsn'] ?? '', $config['user'] ?? null, $config['password'] ?? null, [
+    $pdo = new PDO($secrets['dsn'] ?? '', $secrets['user'] ?? null, $secrets['password'] ?? null, [
         PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
         PDO::ATTR_EMULATE_PREPARES => false,
     ]);
@@ -69,12 +69,12 @@ function members_api_members($config)
 // [HTTP status, body] for the request $server.
 function members_api_response($server)
 {
-    $config = members_api_config($server['PGACC_MEMBERS_CONFIG'] ?? null);
-    if (!members_api_allowed($config, $server)) {
+    $secrets = members_api_secrets($server['PGACC_MEMBERS_SECRETS'] ?? null);
+    if (!members_api_allowed($secrets, $server)) {
         return [403, ''];
     }
     try {
-        return [200, json_encode(members_api_members($config), JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE)];
+        return [200, json_encode(members_api_members($secrets), JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE)];
     } catch (Throwable $e) {
         // Only the class and code: the message may contain SQL or the user.
         error_log('members.php: ' . get_class($e) . ' ' . $e->getCode());
