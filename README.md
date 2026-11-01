@@ -95,9 +95,10 @@ The answer is JSON, `[{"id": 123, "amount_cents": 2000, "paid_until": "2026-12-3
 3. **Write** in one transaction (READ COMMITTED), for each id that is an
    eligible member (`usr_valid = 1` and an active role-2 membership,
    `mem_begin <= today <= mem_end`; other ids are skipped and counted):
-   - field 26 only if the new date is later:
-     `INSERT … ON DUPLICATE KEY UPDATE usd_value = GREATEST(COALESCE(usd_value, ''), VALUES(usd_value))`
-     (a later date entered by hand stays);
+   - field 26 unless the stored value is an ISO date (`YYYY-MM-DD`, the
+     rule of the `pgacc_members` view) later than the new one:
+     `INSERT … ON DUPLICATE KEY UPDATE usd_value = IF(usd_value REGEXP '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' AND usd_value > VALUES(usd_value), usd_value, VALUES(usd_value))`
+     (a later date entered by hand stays; any other value, e.g. `31.12.2027`, is replaced);
    - field 27 to the exact euros from the cents (`2505` → `25.05`; no
      floats), also when it goes down.
 

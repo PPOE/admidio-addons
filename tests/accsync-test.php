@@ -48,7 +48,7 @@ function certificate($name, $san)
 
 [$serverPem, $serverCrt] = certificate('server', 'IP:127.0.0.1');
 [, $otherCrt] = certificate('other', 'IP:127.0.0.1');
-[$otherNamePem] = certificate('othername', 'DNS:other.invalid');
+[$otherNamePem, $otherNameCrt] = certificate('othername', 'DNS:other.invalid');
 $document = "$tmp/document.json";
 file_put_contents($document, '[]');
 
@@ -185,6 +185,12 @@ user(11);                                 // unchanged
 field(11, 26, '2026-12-31');
 field(11, 27, '20.00');
 user(12, 1, 0, day(0));                   // role 2 begins and ends today
+user(14);                                 // field 26 not ISO: replaced
+field(14, 26, 'unknown');
+user(15);
+field(15, 26, '31.12.2027');
+user(16);
+field(16, 26, '2027-1-5');
 user(13);                                 // role 2 of another user only: none
 sql('DELETE FROM adm_members WHERE mem_usr_id = 13');
 sql('INSERT INTO adm_members (mem_rol_id, mem_usr_id, mem_uuid, mem_begin) VALUES (38, 13, UUID(), ?)', [day(-400)]);
@@ -202,6 +208,9 @@ $payments = [
     ['id' => 11, 'amount_cents' => 2000, 'paid_until' => '2026-12-31'],
     ['id' => 12, 'amount_cents' => 2000, 'paid_until' => '2026-12-31'],
     ['id' => 13, 'amount_cents' => 2000, 'paid_until' => '2026-12-31'],
+    ['id' => 14, 'amount_cents' => 2000, 'paid_until' => '2026-12-31'],
+    ['id' => 15, 'amount_cents' => 2000, 'paid_until' => '2026-12-31'],
+    ['id' => 16, 'amount_cents' => 2000, 'paid_until' => '2026-12-31'],
 ];
 $initial = data();
 
@@ -282,7 +291,8 @@ $refusals = [
     'HTTP 404' => accsync($payments, ['url' => 'https://127.0.0.1:' . PORT . '/missing']),
     'redirect not followed' => accsync($payments, ['url' => 'https://127.0.0.1:' . PORT . '/redirect']),
     'certificate not the cafile' => accsync($payments, ['cafile' => $otherCrt]),
-    'certificate for another name' => accsync($payments, ['url' => 'https://127.0.0.1:' . OTHER_NAME_PORT . '/mbapi.php']),
+    // The pinned cafile itself, served for a name that is not the URL's.
+    'certificate for another name' => accsync($payments, ['url' => 'https://127.0.0.1:' . OTHER_NAME_PORT . '/mbapi.php', 'cafile' => $otherNameCrt]),
     'nothing listening' => accsync($payments, ['url' => 'https://127.0.0.1:9/mbapi.php']),
     'status 2000' => accsync($payments, ['url' => 'https://127.0.0.1:' . PORT . '/status2000']),
     'body over 1 MiB' => accsync($payments, ['url' => 'https://127.0.0.1:' . PORT . '/big']),
@@ -347,8 +357,14 @@ check('dry run: one line per change and skip, ids and values', changes($dryStdou
     'user 12 field 26: (none) -> 2026-12-31',
     'user 12 field 27: (none) -> 20.00',
     'user 13 skipped: not an eligible member',
+    'user 14 field 26: unknown -> 2026-12-31',
+    'user 14 field 27: (none) -> 20.00',
+    'user 15 field 26: 31.12.2027 -> 2026-12-31',
+    'user 15 field 27: (none) -> 20.00',
+    'user 16 field 26: 2027-1-5 -> 2026-12-31',
+    'user 16 field 27: (none) -> 20.00',
 ]));
-check('dry run: summary line', str_contains($dryStdout, 'dry run: 12 payments, 11 changes, 5 skipped'));
+check('dry run: summary line', str_contains($dryStdout, 'dry run: 15 payments, 17 changes, 5 skipped'));
 
 // Rollback: an SQL error on a later member undoes the earlier writes.
 user(20);
@@ -370,15 +386,17 @@ check('amount below one euro', $data['3/27'] === '0.07');
 check('empty values: set', $data['4/26'] === '2026-12-31' && $data['4/27'] === '0.00');
 check('NULL values: set', $data['5/26'] === '2026-12-31' && $data['5/27'] === '1234567890.12');
 check('ineligible and unknown ids: nothing written', !array_filter(array_keys($data), fn ($key) => in_array((int) $key, [6, 7, 8, 9, 13], true)));
+check('field 26 not ISO (text, German, no leading zeros): replaced', $data['14/26'] === '2026-12-31'
+    && $data['15/26'] === '2026-12-31' && $data['16/26'] === '2026-12-31');
 check('role 2 only today: written', ($data['12/26'] ?? null) === '2026-12-31');
 check('ids not in the document: unchanged', $data['10/26'] === '2025-12-31' && $data['10/27'] === '30.00');
 check('equal values: unchanged', $data['11/26'] === '2026-12-31' && $data['11/27'] === '20.00');
 check('names and other fields: unchanged', $data['1/1'] === 'Secret-Lastname' && $data['1/2'] === 'Secret-Firstname');
-check('the journal gets the counts only, no ids or values', $stdout === "12 payments, 11 changes, 5 skipped\n");
+check('the journal gets the counts only, no ids or values', $stdout === "15 payments, 17 changes, 5 skipped\n");
 check('nothing on stderr', $stderr === '');
 
 [$status, $stdout] = accsync($payments);
-check('second run: no changes', $status === 0 && $stdout === "12 payments, 0 changes, 5 skipped\n" && data() === $data);
+check('second run: no changes', $status === 0 && $stdout === "15 payments, 0 changes, 5 skipped\n" && data() === $data);
 
 // A status line without a reason phrase is accepted.
 [$status, $stdout] = accsync($payments, ['url' => 'https://127.0.0.1:' . PORT . '/noreason']);

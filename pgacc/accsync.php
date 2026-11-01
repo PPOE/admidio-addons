@@ -6,8 +6,9 @@
 //   php accsync.php [--dry-run] [--secrets=<file>]
 // Fetches pgacc's internal endpoint (JSON [{"id": int, "amount_cents": int,
 // "paid_until": "YYYY-MM-DD"}, ...]) and writes "paid until" (profile field
-// 26; only a later date) and the amount in euros (field 27; exactly, also
-// down) of the eligible members into the Admidio database, in one
+// 26; a stored value stays only if it is a later ISO date) and the amount in
+// euros (field 27; exactly, also down) of the eligible members into the
+// Admidio database, in one
 // transaction. Ids that are not eligible members are skipped; members not in
 // the document are left unchanged. Before that, a deployment check, and the
 // whole document must be valid; otherwise nothing is written. Prints a
@@ -176,7 +177,8 @@ function accsync_apply($pdo, $payments, $dryRun)
     $current = $pdo->prepare('SELECT usd_value FROM pgacc_accsync_user_data WHERE usd_usr_id = ? AND usd_usf_id = ? FOR UPDATE');
     $upsert = [
         26 => $pdo->prepare("INSERT INTO pgacc_accsync_user_data (usd_usr_id, usd_usf_id, usd_value) VALUES (?, 26, ?)
-            ON DUPLICATE KEY UPDATE usd_value = GREATEST(COALESCE(usd_value, ''), VALUES(usd_value))"),
+            ON DUPLICATE KEY UPDATE usd_value = IF(usd_value REGEXP '^[0-9]{4}-[0-9]{2}-[0-9]{2}\$' AND usd_value > VALUES(usd_value),
+                usd_value, VALUES(usd_value))"),
         27 => $pdo->prepare('INSERT INTO pgacc_accsync_user_data (usd_usr_id, usd_usf_id, usd_value) VALUES (?, 27, ?)
             ON DUPLICATE KEY UPDATE usd_value = VALUES(usd_value)'),
     ];
