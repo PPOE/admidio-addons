@@ -40,16 +40,13 @@ the mail server have presumably not been updated from Admidio since then.
 
 The interfaces between the membership system and the finance application pgacc,
 imported **unchanged** from `adm_api/` of PPOE/admidio-old (identical to the
-copies deployed on the current membership system):
+copies deployed on the old membership system):
 
-- `adm_names.php`: **member list for pgacc.** Prints the active members
-  (role 2) with ID, last and first name (profile fields 1 and 2), the regional
-  organisation role (37–45) and whether the membership fee is paid (field 26,
-  "paid until", in the future), encrypted with Rijndael-256-CBC (`mcrypt`,
-  key `md5($key4)`, IV `md5(md5($key4))`). pgacc's `getusers.php` fetches and
-  decrypts it with the same key (pgacc's `$datakey`). In use.
+- `adm_names.php` (removed): the old encrypted member list, replaced by
+  `internal/members.php` (below).
 - `accsync.php`: **payment status from pgacc.** Fetches pgacc's `mbapi.php`,
-  decrypts it with the same key and writes "paid until" (field 26) and the
+  decrypts it with the shared key (`$key4`, pgacc's `$datakey`; Rijndael-256-CBC via
+  `mcrypt`) and writes "paid until" (field 26) and the
   amount (field 27) into the members' profiles. Run every 10 minutes by
   `lgfmail.sh`; it currently fails because the membership system cannot reach
   pgacc.
@@ -65,7 +62,7 @@ change in pgacc, is needed before the membership system moves to Admidio 5.
 
 ### Member list for pgacc (sync v2)
 
-Replaces `adm_names.php`. pgacc fetches `members.php` from an internal
+Replaces `adm_names.php` (removed). pgacc fetches `members.php` from an internal
 listener of its own (not through the public web server), over TLS:
 
 - `internal/members.php` is the only file of that listener's document root;
