@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# Test environment: MariaDB with the Admidio tables and pgacc/pgacc_members.sql,
+# and PHP 8.5 running tests/members-test.php. PHP connects through the
+# MariaDB socket (shared volume), as the add-on does in production, so the
+# reader user is 'pgacc_members'@'localhost'. No network access is needed.
+services:
+  db:
+    image: mariadb:12.3@sha256:d46e102fa8b9b72bfcdeb56f9dd538742092119dc8b11f31fe662605cd234cd9
+    environment:
+      MARIADB_ROOT_PASSWORD: test-root-password
+      MARIADB_DATABASE: admidio
+    volumes:
+      - socket:/run/mysqld
+      - ./schema.sql:/docker-entrypoint-initdb.d/1-schema.sql:ro
+      - ./reader.sql:/docker-entrypoint-initdb.d/2-reader.sql:ro
+      - ../pgacc/pgacc_members.sql:/docker-entrypoint-initdb.d/3-pgacc_members.sql:ro
+    tmpfs:
+      - /var/lib/mysql
+    network_mode: none
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 2s
+      retries: 60
+  php:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - socket:/run/mysqld
+      - ..:/src:ro
+    working_dir: /src
+    network_mode: none
+    command: ["php", "tests/members-test.php"]
+volumes:
+  socket:

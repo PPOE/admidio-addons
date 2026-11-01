@@ -27,3 +27,6 @@ version 2 (it ships Admidio's license text). The files themselves carry no
 license statement of their own; they are included here under the same terms.
 Their copyright remains with their author, as recorded in the history of
 PPOE/admidio-old.
+
+tests/schema.sql contains table definitions copied from Admidio 5.0.17
+(install/db_scripts/db.sql, copyright The Admidio Team, GPL-2.0-only).

@@ -10,7 +10,9 @@ The add-ons run on the same server and use the Admidio database.
 | Directory | What | Status |
 |---|---|---|
 | [`mail-alias-sync/`](mail-alias-sync/) | Export of the mail aliases defined by roles | imported as is, not yet ported; not fetched since 2018 at the latest |
-| [`pgacc/`](pgacc/) | Interfaces with the finance application [pgacc](https://github.com/PPOE/pgacc) | imported as is, not yet ported; **in use** |
+| [`pgacc/`](pgacc/) | Interfaces with the finance application [pgacc](https://github.com/PPOE/pgacc) | old files imported as is, **in use**; the new member list (below) is not deployed yet |
+| [`internal/`](internal/) | Document root of the internal listener: `members.php` only | new, not deployed yet |
+| [`tests/`](tests/) | Tests of the member list (Docker) | |
 
 ### mail-alias-sync
 
@@ -60,6 +62,70 @@ functions, read their keys and DB access from `config.php`, and have no
 authentication beyond the shared key. `accsync.php` builds its SQL from the
 decrypted (unauthenticated) data. Porting them, together with the matching
 change in pgacc, is needed before the membership system moves to Admidio 5.
+
+### Member list for pgacc (sync v2)
+
+Replaces `adm_names.php`. pgacc fetches `members.php` from an internal
+listener of its own (not through the public web server), over TLS:
+
+- `internal/members.php` is the only file of that listener's document root;
+  the code is in `pgacc/members-api.php`.
+- It answers **403 with an empty body** unless the socket's address
+  (`REMOTE_ADDR`; no forwarded headers) is in the configured peer list **and**
+  the request carries `Authorization: Bearer <token>` with the configured
+  token. A missing or invalid configuration, an empty token or an empty peer
+  list refuse everything. Any error after that: **503 with an empty body**
+  (the log gets only the exception class and code).
+- Otherwise: `200`, `application/json`, ordered by id:
+  `[{"id": 123, "uuid": "…", "name": "First Last", "lo": 38, "paid": 1}, …]`
+  (`lo` may be `null`; `paid` is 0 or 1).
+- The data comes from one prepared `SELECT` on the view `pgacc_members`
+  ([`pgacc/pgacc_members.sql`](pgacc/pgacc_members.sql); its comment lists the
+  rules), read by a database user with `SELECT` on that view only.
+
+Deployment (not in this repository):
+
+1. Create the reader `'pgacc_members'@'localhost'` with a random password,
+   then apply `pgacc/pgacc_members.sql` as an administrator in the Admidio
+   database (table prefix `adm`); apply it again after Admidio updates.
+2. A configuration file outside every document root, readable by PHP-FPM
+   only, returning:
+
+   ```php
+   <?php return [
+       'token' => '<64 hex characters>',  // openssl rand -hex 32, the same as in pgacc
+       'peers' => ['<pgacc internal address>'],
+       'dsn' => 'mysql:unix_socket=/run/mysqld/mysqld.sock;dbname=<admidio db>;charset=utf8mb4',
+       'user' => 'pgacc_members',
+       'password' => '<reader password>',
+   ];
+   ```
+
+3. An nginx `server` on the internal address only, serving only
+   `/members.php`, with the path of that file as `PGACC_MEMBERS_CONFIG`:
+
+   ```nginx
+   server {
+       listen <internal address>:8443 ssl;
+       ssl_certificate     /etc/<…>/members-tls.crt;   # self-signed, SAN = the address
+       ssl_certificate_key /etc/<…>/members-tls.key;
+       root /srv/admidio-addons/internal;
+       access_log off;
+       location = /members.php {
+           include fastcgi_params;   # REMOTE_ADDR = the socket's address; no real-IP module here
+           fastcgi_param SCRIPT_FILENAME $document_root/members.php;
+           fastcgi_param PGACC_MEMBERS_CONFIG /etc/<…>/members-config.php;
+           fastcgi_pass unix:/run/php/<php-fpm socket>;
+       }
+       location / { return 404; }
+   }
+   ```
+
+   plus the firewall rules that admit only pgacc's address on that port.
+
+Tests: `tests/run.sh` (Docker; MariaDB 12.3 with the Admidio 5.0.17 tables
+the view reads, and PHP 8.5; synthetic users only). GitHub Actions runs it on
+every push.
 
 ## Rules
 
