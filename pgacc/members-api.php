@@ -16,33 +16,7 @@
 //  'dsn' => 'mysql:unix_socket=...;dbname=...;charset=utf8mb4',
 //  'user' => '<reader>', 'password' => '...'].
 
-// The secrets from $file, or null unless they have a non-empty token and a
-// non-empty peer list.
-function members_api_secrets($file)
-{
-    if (!is_string($file) || $file === '' || !is_file($file)) {
-        return null;
-    }
-    try {
-        $secrets = include $file;
-    } catch (Throwable $e) {
-        return null;
-    }
-    if (!is_array($secrets) || !is_string($secrets['token'] ?? null) || $secrets['token'] === ''
-        || !is_array($secrets['peers'] ?? null) || $secrets['peers'] === []) {
-        return null;
-    }
-    return $secrets;
-}
-
-// True if the request ($_SERVER) comes from a peer of the secrets (the
-// socket's address; no forwarded headers) and carries their token.
-function members_api_allowed($secrets, $server)
-{
-    return $secrets !== null
-        && in_array($server['REMOTE_ADDR'] ?? null, $secrets['peers'], true)
-        && hash_equals('Bearer ' . $secrets['token'], (string) ($server['HTTP_AUTHORIZATION'] ?? ''));
-}
+require_once dirname(__DIR__) . '/lib/internal-api.php';
 
 // The members, ordered by id. Throws on any database error.
 function members_api_members($secrets)
