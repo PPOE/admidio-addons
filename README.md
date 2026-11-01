@@ -291,9 +291,11 @@ the same internal listener as pgacc's `members.php`.
   ago (the trial month). "Paid until 31 December" is eligible through 30
   January. Both fields count only as real calendar dates (`YYYY-MM-DD`).
 - `email`: only when eligible, else `null`. Profile field 12, or field 33
-  when field 12 is `mitglied@piratenpartei.at`. An address that is not
-  valid (PHP's `FILTER_VALIDATE_EMAIL`, at most 254 characters) is sent as
-  `null`; the member is still listed. A deliberate difference from
+  when field 12 is `mitglied@piratenpartei.at`. An address outside
+  Liquid's rule (the regular expression of its `member_sync()`: a plain
+  `local@domain`, the domain with at least one dot, no quoted local parts or
+  IP literals; at most 254 characters) is sent as `null`, since Liquid would
+  reject the whole list for it; the member is still listed. A deliberate difference from
   `adm1.php`: it used field 33 only if that had more than 4 characters and
   otherwise kept `mitglied@piratenpartei.at`; here a missing or empty field
   33 gives `null`, so no account gets that address. The comparison with

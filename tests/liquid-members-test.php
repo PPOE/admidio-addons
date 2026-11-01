@@ -202,6 +202,10 @@ liquid_member(10, $paid + [4 => '9999', 39 => '01010']);                // unkno
 liquid_member(11, $paid + [4 => ' 8010 ']);                             // spaces
 liquid_member(12, $paid);                                               // no postcode, no email
 liquid_member(13, $paid + [12 => 'eve@example.org', 4 => '1010'], 40);
+liquid_member(14, $paid + [12 => '"quoted"@example.org', 4 => '8010']);  // not Liquid's email rule
+liquid_member(15, $paid + [12 => 'ip@[192.0.2.1]', 4 => '8010']);
+liquid_member(16, $paid + [12 => 'nodot@localhost', 4 => '8010']);
+liquid_member(17, $paid + [12 => "newline@example.org\n", 4 => '8010']);
 user(20, 0);                                                            // not valid
 member(20, 2, '2000-01-01');
 field(20, 12, 'ivo@example.org');
@@ -222,7 +226,7 @@ $byId = array_column($rows ?? [], null, 'id');
 $pgaccRows = $root->query('SELECT id, lo FROM pgacc_members ORDER BY id')->fetchAll(PDO::FETCH_ASSOC);
 check('the members and LOs of pgacc_members, ordered by id', array_map(fn($r) => [$r['id'], $r['lo']], $rows ?? [])
     === array_map(fn($r) => [(int) $r['id'], $r['lo'] === null ? null : (int) $r['lo']], $pgaccRows));
-check('the members: valid, active role 2', array_column($rows ?? [], 'id') === [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 22]);
+check('the members: valid, active role 2', array_column($rows ?? [], 'id') === [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 22]);
 check('member: id, LO, eligible, email and regions', ($byId[1] ?? null) === ['id' => 1, 'lo' => 38, 'eligible' => true, 'email' => 'anna@example.org', 'regions' => ['AT130']]);
 check('LO change day: the LO that begins today', ($byId[22]['lo'] ?? 0) === 41);
 check('no LO: null', array_key_exists('lo', $byId[12] ?? []) && $byId[12]['lo'] === null);
@@ -232,6 +236,9 @@ check('email: mitglied@piratenpartei.at without a backup: null', array_key_exist
 check('email: invalid: null, member still listed and eligible', ($byId[5] ?? null) === ['id' => 5, 'lo' => null, 'eligible' => true, 'email' => null, 'regions' => []]);
 check('email: longer than 254 characters: null', array_key_exists('email', $byId[6] ?? []) && $byId[6]['email'] === null);
 check('email: valid with an apostrophe: kept', ($byId[7]['email'] ?? null) === "o'brien@example.org");
+foreach ([14 => 'a quoted local part', 15 => 'an IP literal', 16 => 'a domain without a dot', 17 => 'a trailing newline'] as $id => $what) {
+    check("email: $what: null, member still listed", ($byId[$id] ?? null) === ['id' => $id, 'lo' => null, 'eligible' => true, 'email' => null, 'regions' => ['AT221']]);
+}
 check('email: none: null', array_key_exists('email', $byId[12] ?? []) && $byId[12]['email'] === null);
 check('regions: fields 4 and 39, both codes, sorted', ($byId[8]['regions'] ?? null) === ['AT130', 'AT221']);
 check('regions: the same code twice: once', ($byId[9]['regions'] ?? null) === ['AT130']);

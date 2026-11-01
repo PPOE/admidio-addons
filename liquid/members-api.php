@@ -5,8 +5,9 @@
 // Member list for Liquid (internal/liquid-members.php): Liquid fetches the
 // active members as JSON, [{"id": int, "lo": int|null, "eligible": bool,
 // "email": string|null, "regions": [string, ...]}, ...], from the view
-// liquid_members (liquid_members.sql). An email that is not valid (PHP's
-// FILTER_VALIDATE_EMAIL, at most 254 characters) is sent as null. A request
+// liquid_members (liquid_members.sql). An email outside Liquid's rule
+// (LIQUID_MEMBERS_EMAIL, at most 254 characters) is sent as null, since
+// Liquid would reject the whole list for it. A request
 // must come from a peer of the secrets file and carry its token
 // ("Authorization: Bearer <token>"); otherwise, and without a valid secrets
 // file, it gets 403 with an empty body. Any error after that answers 503
@@ -19,6 +20,11 @@
 //  'user' => '<reader>', 'password' => '...'].
 
 require_once dirname(__DIR__) . '/lib/internal-api.php';
+
+// The email rule of Liquid's member_sync() (member_sync.sql), the same
+// regular expression: a plain local@domain, the domain with at least one dot
+// (no quoted local parts, no IP literals).
+const LIQUID_MEMBERS_EMAIL = '/^[A-Za-z0-9!#$%&\'*+\/=?^_`{|}~-]+(\.[A-Za-z0-9!#$%&\'*+\/=?^_`{|}~-]+)*@[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$/D';
 
 // The members, ordered by id. Throws on any database error.
 function liquid_members_api_members($secrets)
@@ -36,7 +42,7 @@ function liquid_members_api_members($secrets)
             'id' => (int) $row['id'],
             'lo' => $row['lo'] === null ? null : (int) $row['lo'],
             'eligible' => (int) $row['eligible'] === 1,
-            'email' => is_string($email) && strlen($email) <= 254 && filter_var($email, FILTER_VALIDATE_EMAIL) !== false ? $email : null,
+            'email' => is_string($email) && strlen($email) <= 254 && preg_match(LIQUID_MEMBERS_EMAIL, $email) === 1 ? $email : null,
             'regions' => $row['regions'] === null ? [] : explode(',', $row['regions']),
         ];
     }
