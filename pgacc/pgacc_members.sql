@@ -16,8 +16,8 @@
 --   lo    the active regional organisation role (37-45) with the latest
 --         mem_begin, ties to the lowest role id (on the day an LO changes,
 --         the old and the new one may both be active); NULL if none
---   paid  1 if "paid until" (profile field 26, an ISO date) is after today,
---         else 0
+--   paid  1 if "paid until" (profile field 26, an ISO date) is today or
+--         later, else 0 (paid until 31 December counts as paid on that day)
 
 CREATE OR REPLACE SQL SECURITY DEFINER VIEW pgacc_members AS
 SELECT
@@ -34,7 +34,7 @@ SELECT
         ORDER BY m.mem_begin DESC, m.mem_rol_id ASC LIMIT 1) AS lo,
     EXISTS (SELECT 1 FROM adm_user_data d
         WHERE d.usd_usr_id = u.usr_id AND d.usd_usf_id = 26
-            AND d.usd_value REGEXP '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' AND d.usd_value > CURRENT_DATE) AS paid
+            AND d.usd_value REGEXP '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' AND d.usd_value >= CURRENT_DATE) AS paid
 FROM adm_users u
 WHERE u.usr_valid = 1
     AND EXISTS (SELECT 1 FROM adm_members m
