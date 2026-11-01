@@ -16,7 +16,8 @@
 --             ago (the trial month), as adm1.php of the old membership
 --             system: "paid until 31 December" is eligible through 30
 --             January. Both fields count only as real calendar dates
---             (YYYY-MM-DD). Else 0
+--             (YYYY-MM-DD; no zero year, month or day, whatever the SQL
+--             mode). Else 0
 --   email     only when eligible: profile field 12, or field 33 when field
 --             12 is mitglied@piratenpartei.at; else NULL
 --   regions   the distinct codes (sorted, comma-separated) of the postcodes
@@ -45,10 +46,14 @@ FROM (
             p.lo,
             (SELECT MAX(STR_TO_DATE(d.usd_value, '%Y-%m-%d')) FROM adm_user_data d
                 WHERE d.usd_usr_id = p.id AND d.usd_usf_id = 35
-                    AND DATE_FORMAT(STR_TO_DATE(d.usd_value, '%Y-%m-%d'), '%Y-%m-%d') = d.usd_value) AS accredited,
+                    AND DATE_FORMAT(STR_TO_DATE(d.usd_value, '%Y-%m-%d'), '%Y-%m-%d') = d.usd_value
+                    AND YEAR(STR_TO_DATE(d.usd_value, '%Y-%m-%d')) > 0 AND MONTH(STR_TO_DATE(d.usd_value, '%Y-%m-%d')) > 0
+                    AND DAYOFMONTH(STR_TO_DATE(d.usd_value, '%Y-%m-%d')) > 0) AS accredited,
             (SELECT MAX(STR_TO_DATE(d.usd_value, '%Y-%m-%d')) FROM adm_user_data d
                 WHERE d.usd_usr_id = p.id AND d.usd_usf_id = 26
-                    AND DATE_FORMAT(STR_TO_DATE(d.usd_value, '%Y-%m-%d'), '%Y-%m-%d') = d.usd_value) AS paid_until,
+                    AND DATE_FORMAT(STR_TO_DATE(d.usd_value, '%Y-%m-%d'), '%Y-%m-%d') = d.usd_value
+                    AND YEAR(STR_TO_DATE(d.usd_value, '%Y-%m-%d')) > 0 AND MONTH(STR_TO_DATE(d.usd_value, '%Y-%m-%d')) > 0
+                    AND DAYOFMONTH(STR_TO_DATE(d.usd_value, '%Y-%m-%d')) > 0) AS paid_until,
             (SELECT MAX(d.usd_value) FROM adm_user_data d WHERE d.usd_usr_id = p.id AND d.usd_usf_id = 12) AS email,
             (SELECT MAX(d.usd_value) FROM adm_user_data d WHERE d.usd_usr_id = p.id AND d.usd_usf_id = 33) AS backup_email,
             (SELECT GROUP_CONCAT(DISTINCT r.nuts ORDER BY r.nuts) FROM adm_user_data d

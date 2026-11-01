@@ -283,10 +283,17 @@ $cases = [
     'accredited: not zero-padded: no' => [[35 => '2026-6-1', 26 => '2026-12-31'], 0],
     'accredited: trailing text: no' => [[35 => '2026-06-01x', 26 => '2026-12-31'], 0],
     'accredited: another format: no' => [[35 => '01.06.2026', 26 => '2026-12-31'], 0],
+    'accredited: zero date: no' => [[35 => '0000-00-00', 26 => '2026-12-31'], 0],
+    'accredited: zero year: no' => [[35 => '0000-06-01', 26 => '2026-12-31'], 0],
+    'accredited: zero month: no' => [[35 => '2026-00-01', 26 => '2026-12-31'], 0],
+    'accredited: zero day: no' => [[35 => '2026-06-00', 26 => '2026-12-31'], 0],
     'accredited on a leap day: yes' => [[35 => '2024-02-29', 26 => '2026-12-31'], 1],
     'paid until: not a calendar date: no' => [[35 => '2025-01-01', 26 => '2026-06-31'], 0],
     'paid until: another format: no' => [[35 => '2025-01-01', 26 => '31.12.2026'], 0],
     'paid until: trailing text: no' => [[35 => '2025-01-01', 26 => '2026-12-31x'], 0],
+    'paid until: zero date: no' => [[35 => '2025-01-01', 26 => '0000-00-00'], 0],
+    'paid until: zero month: no' => [[35 => '2025-01-01', 26 => '2026-00-31'], 0],
+    'paid until: zero day: no' => [[35 => '2025-01-01', 26 => '2026-12-00'], 0],
     'paid until a leap day: yes' => [[35 => '2025-01-01', 26 => '2028-02-29'], 1],
 ];
 foreach ($cases as $name => [$fields, $expected]) {
