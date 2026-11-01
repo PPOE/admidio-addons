@@ -10,7 +10,8 @@ The add-ons run on the same server and use the Admidio database.
 | Directory | What | Status |
 |---|---|---|
 | [`mail-alias-sync/`](mail-alias-sync/) | Export of the mail aliases defined by roles | imported as is, not yet ported; not fetched since 2018 at the latest |
-| [`pgacc/`](pgacc/) | Interfaces with the finance application [pgacc](https://github.com/PPOE/pgacc) | `adm_names.php` imported as is, **in use**; the new `accsync.php` (below) is not deployed yet |
+| [`pgacc/`](pgacc/) | Interfaces with the finance application [pgacc](https://github.com/PPOE/pgacc) (sync v2): member list and payment status | new, not deployed yet; the old `adm_names.php`, `accsync.php` and `lgfmail.sh` they replace (removed here) are still in use on the old membership system |
+| [`internal/`](internal/) | Document root of the internal listener: `members.php` only | new, not deployed yet |
 | [`tests/`](tests/) | Tests of the add-ons (Docker) | |
 
 ### mail-alias-sync
@@ -37,23 +38,108 @@ the mail server have presumably not been updated from Admidio since then.
 
 ### pgacc
 
-The interfaces between the membership system and the finance application pgacc.
+The interfaces between the membership system and the finance application
+pgacc (sync v2). They replace the old files imported from `adm_api/` of
+[PPOE/admidio-old](https://github.com/PPOE/admidio-old), which are removed
+from this repository:
 
-- `adm_names.php`: **member list for pgacc**, imported **unchanged** from
-  `adm_api/` of [PPOE/admidio-old](https://github.com/PPOE/admidio-old)
-  (identical to the copy deployed on the old membership system). Prints the
-  active members (role 2) with ID, last and first name (profile fields 1 and
-  2), the regional organisation role (37–45) and whether the membership fee is
-  paid (field 26, "paid until", in the future), encrypted with
-  Rijndael-256-CBC (`mcrypt`, key `md5($key4)`, IV `md5(md5($key4))`).
-  pgacc's `getusers.php` fetches and decrypts it with the same key (pgacc's
-  `$datakey`). In use; it uses the removed `mysql_*` and `mcrypt_*` functions
-  and is replaced separately.
-- `accsync.php`: **payment status from pgacc** (sync v2, below). It replaces
-  the old `accsync.php` and its cron wrapper `lgfmail.sh` of PPOE/admidio-old
-  (root, every 10 minutes), which also ran `registration.php` and
-  `lgfmail.php`; those two are **not ported** and not part of this
-  repository.
+- `adm_names.php` (removed): the old member list, encrypted with a key
+  shared with pgacc. Replaced by `internal/members.php` with the
+  code in `pgacc/members-api.php` (Member list for pgacc, below).
+- the old `accsync.php` and its cron wrapper `lgfmail.sh` (removed): fetched
+  pgacc's `mbapi.php` encrypted the same way, every 10 minutes (root); the
+  wrapper also ran `registration.php` and `lgfmail.php`, which are **not
+  ported** and not part of this repository. Replaced by the new
+  `pgacc/accsync.php` (Payment status from pgacc, below).
+
+Neither new flow uses a shared encryption key: both use HTTPS with a pinned
+certificate, a bearer token and a peer address check.
+
+### Member list for pgacc (sync v2)
+
+Replaces `adm_names.php` (removed). pgacc fetches the active members from
+`members.php` on an internal listener of this side (not through the public
+web server). `internal/members.php` is the only file of that listener's
+document root; the code is in `pgacc/members-api.php`.
+
+#### Transport and authentication
+
+- Caller: pgacc. Callee: this side, `https://<internal address>:8443/members.php`.
+- TLS with this side's self-signed certificate (see [Certificates](#certificates-both-flows)); pgacc
+  verifies it against that certificate as its only trust anchor.
+- The request must come from an address in the secrets file's peer list
+  (the socket's `REMOTE_ADDR`; no forwarded headers) **and** carry
+  `Authorization: Bearer <token>` with the secrets file's token (compared
+  with `hash_equals`, never logged). Otherwise: **403 with an empty body**.
+  A missing or invalid secrets file, an empty token or an empty peer list
+  refuse everything.
+- Any error after that: **503 with an empty body** (the log gets only the
+  exception class and code).
+
+#### Data
+
+`200`, `application/json`, ordered by id:
+`[{"id": 123, "uuid": "…", "name": "First Last", "lo": 38, "paid": 1}, …]`
+(`lo` may be `null`; `paid` is 0 or 1; "paid until" today or later counts
+as paid, so "paid until 31 December" is still paid on 31 December). The data
+comes from one prepared `SELECT` on the view `pgacc_members`
+([`pgacc/pgacc_members.sql`](pgacc/pgacc_members.sql); its comment lists the
+rules), read by the database user `'pgacc_members'@'localhost'` with
+`SELECT` on that view only.
+
+#### Secrets file
+
+`/etc/admidio-addons/members-secrets.php`, outside every document root,
+readable by PHP-FPM only; the listener passes its path as the FastCGI
+parameter `PGACC_MEMBERS_SECRETS`:
+
+```php
+<?php return [
+    'token' => '<64 hex characters>',  // openssl rand -hex 32, the same as in pgacc
+    'peers' => ['<pgacc internal address>'],
+    'dsn' => 'mysql:unix_socket=/run/mysqld/mysqld.sock;dbname=<admidio db>;charset=utf8mb4',
+    'user' => 'pgacc_members',
+    'password' => '<reader password>',
+];
+```
+
+#### Listener
+
+An nginx `server` on the internal address only, serving only
+`/members.php`:
+
+```nginx
+server {
+    listen <internal address>:8443 ssl;
+    ssl_certificate     /etc/admidio-addons/sync-tls.crt;   # self-signed, SAN = the address
+    ssl_certificate_key /etc/admidio-addons/sync-tls.key;
+    root /srv/admidio-addons/internal;
+    access_log off;
+    location = /members.php {
+        include fastcgi_params;   # REMOTE_ADDR = the socket's address; no real-IP module here
+        fastcgi_param SCRIPT_FILENAME $document_root/members.php;
+        fastcgi_param PGACC_MEMBERS_SECRETS /etc/admidio-addons/members-secrets.php;
+        fastcgi_pass unix:/run/php/<php-fpm socket>;
+    }
+    location / { return 404; }
+}
+```
+
+#### Certificates
+
+See [Certificates](#certificates-both-flows). For this flow this side is the callee:
+this side's `/etc/admidio-addons/sync-tls.{crt,key}`; pgacc keeps the
+certificate as `/etc/pgacc/admidio-addons-tls.crt`.
+
+#### Deployment needs
+
+Not in this repository:
+
+1. Create the reader `'pgacc_members'@'localhost'` with a random password,
+   then apply `pgacc/pgacc_members.sql` as an administrator in the Admidio
+   database (table prefix `adm`); apply it again after Admidio updates.
+2. The secrets file, the certificate and the listener above.
+3. The firewall rules that admit only pgacc's address on port 8443.
 
 ### Payment status from pgacc (sync v2)
 
@@ -72,7 +158,7 @@ php pgacc/accsync.php [--dry-run] [--secrets=<file>]
   `https://<pgacc internal address>:8443/mbapi.php`.
 - PHP streams, `https://` only, the certificate verified (`verify_peer`,
   `verify_peer_name`) against pgacc's certificate as the only trust anchor
-  (`cafile`; see Certificates), no redirects, a fixed timeout of 20 s for
+  (`cafile`; see [Certificates](#certificates-both-flows)), no redirects, a fixed timeout of 20 s for
   connection, headers and body together, at most 1 MiB, HTTP 200 required.
 - `Authorization: Bearer <token>` with the secrets file's token (never
   logged); pgacc also checks the caller's address against its peer list and
@@ -160,11 +246,8 @@ The log is in the journal (`journalctl -u pgacc-accsync`).
 
 #### Certificates
 
-Each side's own certificate is `/etc/<app>/sync-tls.{crt,key}`; the peer's
-certificate is `/etc/<app>/<peer>-tls.crt`. Each certificate is self-signed
-by the callee (SAN = the address in the caller's URL) and handed to the
-caller through the deployment inventory. For this flow: pgacc's
-`/etc/pgacc/sync-tls.{crt,key}`; this side keeps the certificate as
+See [Certificates](#certificates-both-flows). For this flow pgacc is the callee:
+pgacc's `/etc/pgacc/sync-tls.{crt,key}`; this side keeps the certificate as
 `/etc/admidio-addons/pgacc-tls.crt` (the `cafile`).
 
 #### Deployment needs
@@ -178,11 +261,21 @@ Not in this repository:
 3. The firewall rule that lets this side reach pgacc's internal listener on
    port 8443.
 
-Tests: `tests/run.sh` (Docker; MariaDB 12.3 with the Admidio 5.0.17 tables
-the add-ons use, their database users and every `pgacc/*.sql`, and PHP 8.5;
-runs each `tests/*-test.php`; `accsync.php` against a local HTTPS test server
-with self-signed certificates; synthetic users only). GitHub Actions runs it
-on every push.
+### Certificates (both flows)
+
+Each side's own certificate is
+`/etc/<app>/sync-tls.{crt,key}`; the peer's certificate is
+`/etc/<app>/<peer>-tls.crt`. Each certificate is self-signed by the callee
+(SAN = the address in the caller's URL) and handed to the caller through the
+deployment inventory.
+
+### Tests
+
+`tests/run.sh` (Docker; MariaDB 12.3 with the Admidio 5.0.17 tables the
+add-ons use, their database users and every `pgacc/*.sql`, and PHP 8.5; runs
+each `tests/*-test.php`; `accsync.php` against a local HTTPS test server with
+self-signed certificates; synthetic users only). GitHub Actions runs it on
+every push.
 
 ## Rules
 
