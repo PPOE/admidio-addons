@@ -26,8 +26,6 @@ Admidio that is distributed under the GNU General Public License version 2
 (it ships Admidio's license text):
 
 - mail-alias-sync/adm_mail.php
-- pgacc/accsync.php
-- pgacc/lgfmail.sh
 
 The files themselves carry no
 license statement of their own; they are included here under the same terms.
