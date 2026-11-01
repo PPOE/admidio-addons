@@ -82,36 +82,65 @@ function accsync_check_deployment($pdo)
 }
 
 // The body of the endpoint: https only, the certificate verified against the
-// cafile alone, no redirects, a timeout ($timeout seconds; 20 except in the
-// tests), at most 1 MiB, HTTP 200 required. Throws otherwise.
+// cafile alone, no redirects, a timeout for connection, headers and body
+// together ($timeout seconds; 20 except in the tests; PHP's own stream
+// timeout applies to each read only), at most 1 MiB, HTTP 200 required.
+// Throws otherwise.
 function accsync_fetch($secrets, $timeout = ACCSYNC_TIMEOUT)
 {
+    $deadline = microtime(true) + $timeout;
+    $url = parse_url($secrets['url']);
+    if (($url['scheme'] ?? '') !== 'https' || !isset($url['host']) || isset($url['user']) || isset($url['pass'])) {
+        throw new AccsyncError('fetch failed: not an https URL');
+    }
+    $port = $url['port'] ?? 443;
     $context = stream_context_create([
-        'http' => [
-            'header' => 'Authorization: Bearer ' . $secrets['token'],
-            'follow_location' => 0,
-            'timeout' => $timeout,
-            'ignore_errors' => true,
-        ],
         'ssl' => [
             'verify_peer' => true,
             'verify_peer_name' => true,
+            'peer_name' => trim($url['host'], '[]'),
             'allow_self_signed' => false,
             'cafile' => $secrets['cafile'],
         ],
     ]);
-    $stream = @fopen($secrets['url'], 'r', false, $context);
+    $stream = @stream_socket_client("ssl://{$url['host']}:$port", $errno, $error, $timeout, STREAM_CLIENT_CONNECT, $context);
     if ($stream === false) {
-        throw new AccsyncError('fetch failed: ' . (error_get_last()['message'] ?? 'unknown error'));
+        throw new AccsyncError('fetch failed: ' . ($error !== '' ? $error : (error_get_last()['message'] ?? 'unknown error')));
     }
-    $body = stream_get_contents($stream, ACCSYNC_MAX_BODY + 1);
-    $meta = stream_get_meta_data($stream);
+    // HTTP/1.0: no chunked body; the connection closes after the response.
+    $request = 'GET ' . ($url['path'] ?? '/') . (isset($url['query']) ? '?' . $url['query'] : '') . " HTTP/1.0\r\n"
+        . 'Host: ' . $url['host'] . (isset($url['port']) ? ':' . $port : '') . "\r\n"
+        . 'Authorization: Bearer ' . $secrets['token'] . "\r\nConnection: close\r\n\r\n";
+    $response = '';
+    $timedOut = false;
+    $limit = 65536 + ACCSYNC_MAX_BODY + 1;
+    $written = @fwrite($stream, $request) === strlen($request);
+    while ($written && !feof($stream) && strlen($response) < $limit) {
+        $left = $deadline - microtime(true);
+        if ($left <= 0) {
+            $timedOut = true;
+            break;
+        }
+        stream_set_timeout($stream, (int) $left, (int) (($left - (int) $left) * 1000000));
+        $chunk = @fread($stream, min(65536, $limit - strlen($response)));
+        if ($chunk === false || stream_get_meta_data($stream)['timed_out']) {
+            $timedOut = true;
+            break;
+        }
+        $response .= $chunk;
+    }
+    $complete = feof($stream);
     fclose($stream);
-    $status = $meta['wrapper_data'][0] ?? '';
+    if (!$written || $timedOut) {
+        throw new AccsyncError('fetch failed: ' . ($written ? 'timeout' : 'cannot send the request'));
+    }
+    $end = strpos($response, "\r\n\r\n");
+    $status = $end === false ? '' : strstr($response, "\r\n", true);
     if (!preg_match('#^HTTP/\S+ 200( |$)#', $status)) {
         throw new AccsyncError('fetch failed: ' . ($status === '' ? 'no status' : $status));
     }
-    if ($body === false || $meta['timed_out'] || strlen($body) > ACCSYNC_MAX_BODY) {
+    $body = substr($response, $end + 4);
+    if (!$complete || strlen($body) > ACCSYNC_MAX_BODY) {
         throw new AccsyncError('fetch failed: incomplete or too large body');
     }
     return $body;

@@ -312,6 +312,21 @@ try {
     check('timeout: the fetch fails', true);
 }
 
+// The timeout is overall: a peer that sends the headers a line or the body a
+// byte at a time (each read well within the timeout) is cut off at the end.
+foreach (['/trickle' => 'body', '/tricklehead' => 'headers'] as $path => $part) {
+    sleep(7); // until the test server is done with the previous request
+    $start = microtime(true);
+    try {
+        accsync_fetch(['url' => 'https://127.0.0.1:' . PORT . $path] + $secrets, 2);
+        $failed = false;
+    } catch (AccsyncError $e) {
+        $failed = true;
+    }
+    check("timeout: trickled $part, the fetch fails at the deadline", $failed && microtime(true) - $start < 4);
+}
+sleep(7);
+
 // Deployment check: each broken expectation stops the run before the fetch.
 $broken = [
     'field 26 not a date' => ["UPDATE adm_user_fields SET usf_type = 'TEXT' WHERE usf_id = 26", "UPDATE adm_user_fields SET usf_type = 'DATE' WHERE usf_id = 26"],

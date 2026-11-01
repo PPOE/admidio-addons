@@ -72,8 +72,8 @@ php pgacc/accsync.php [--dry-run] [--secrets=<file>]
   `https://<pgacc internal address>:8443/mbapi.php`.
 - PHP streams, `https://` only, the certificate verified (`verify_peer`,
   `verify_peer_name`) against pgacc's certificate as the only trust anchor
-  (`cafile`; see Certificates), no redirects, a fixed timeout of 20 s, at
-  most 1 MiB, HTTP 200 required.
+  (`cafile`; see Certificates), no redirects, a fixed timeout of 20 s for
+  connection, headers and body together, at most 1 MiB, HTTP 200 required.
 - `Authorization: Bearer <token>` with the secrets file's token (never
   logged); pgacc also checks the caller's address against its peer list and
   answers 403 with an empty body otherwise.

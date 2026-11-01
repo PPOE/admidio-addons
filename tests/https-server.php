@@ -11,6 +11,8 @@
 //   /noreason   as /mbapi.php, with the status line "HTTP/1.0 200" (no reason)
 //   /status2000 status line "HTTP/1.0 2000 OK" (with a valid body)
 //   /big        200 and a valid document of 1 MiB + 1 byte
+//   /trickle    200 at once, then a valid body of 8 bytes, one per second
+//   /tricklehead the status line at once, then 8 header lines, one per second
 // One request at a time; HTTP/1.0, the connection is closed after each.
 
 [, $port, $pem, $token, $document] = $argv;
@@ -56,6 +58,20 @@ while (true) {
     } elseif ($path === '/big') {
         $status = '200 OK';
         $body = '[' . str_repeat(' ', 1048576 - 1) . ']';
+    } elseif ($path === '/trickle' || $path === '/tricklehead') {
+        $parts = $path === '/trickle'
+            ? array_merge(["HTTP/1.0 200 OK\r\nConnection: close\r\n\r\n"], str_split('[      ]'))
+            : array_merge(["HTTP/1.0 200 OK\r\n"], array_fill(0, 8, "X-Pad: a\r\n"), ["\r\n[]"]);
+        foreach ($parts as $i => $part) {
+            if ($i > 0) {
+                sleep(1);
+            }
+            if (@fwrite($connection, $part) === false) {
+                break;
+            }
+        }
+        fclose($connection);
+        continue;
     } elseif ($path === '/slow') {
         sleep(3);
         $status = '200 OK';
