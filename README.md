@@ -10,7 +10,9 @@ The add-ons run on the same server and use the Admidio database.
 | Directory | What | Status |
 |---|---|---|
 | [`pgacc/`](pgacc/) | Interfaces with the finance application [pgacc](https://github.com/PPOE/pgacc) (sync v2): member list and payment status | new, not deployed yet; they replace the old `adm_names.php`, `accsync.php` and `lgfmail.sh` (removed here) of the old membership system, which is shut down |
-| [`internal/`](internal/) | Document root of the internal listener: `members.php` only | new, not deployed yet |
+| [`liquid/`](liquid/) | Interface with [LiquidFeedback](https://www.liquidfeedback.com/) (Liquid): member list with eligibility, email and regions | new, not deployed yet; replaces `adm1.php` of the old membership system |
+| [`internal/`](internal/) | Document root of the internal listener: `members.php` and `liquid-members.php` only | new, not deployed yet |
+| [`lib/`](lib/) | Code shared by the internal listener's endpoints: token and peer check | new, not deployed yet |
 | [`tests/`](tests/) | Tests of the add-ons (Docker) | |
 
 ### Removed: mail alias export
@@ -46,8 +48,9 @@ certificate, a bearer token and a peer address check.
 
 Replaces `adm_names.php` (removed). pgacc fetches the active members from
 `members.php` on an internal listener of this side (not through the public
-web server). `internal/members.php` is the only file of that listener's
-document root; the code is in `pgacc/members-api.php`.
+web server). `internal/members.php` is a file of that listener's document
+root (the other is `liquid-members.php`, Member list for Liquid); the code is
+in `pgacc/members-api.php`.
 
 #### Transport and authentication
 
@@ -93,7 +96,7 @@ parameter `PGACC_MEMBERS_SECRETS`:
 #### Listener
 
 An nginx `server` on the internal address only, serving only
-`/members.php`:
+`/members.php` (and `/liquid-members.php`, see Member list for Liquid):
 
 ```nginx
 server {
@@ -250,6 +253,105 @@ Not in this repository:
 3. The firewall rule that lets this side reach pgacc's internal listener on
    port 8443.
 
+### Member list for Liquid
+
+Replaces `adm1.php` of the old membership system (public, encrypted with a
+shared key). Liquid fetches the active members from `liquid-members.php` on
+the same internal listener as pgacc's `members.php`.
+`internal/liquid-members.php` is the entry point; the code is in
+`liquid/members-api.php`, the authentication in `lib/internal-api.php`
+(shared with `members.php`).
+
+#### Transport and authentication
+
+- Caller: Liquid. Callee: this side, `https://<internal address>:8443/liquid-members.php`.
+- TLS with this side's certificate, the same as for pgacc (see
+  [Certificates](#certificates-both-flows)); Liquid verifies it against
+  that certificate as its only trust anchor.
+- As for pgacc's `members.php`, but with its own secrets file: the request
+  must come from an address in that file's peer list (the socket's
+  `REMOTE_ADDR`; no forwarded headers) **and** carry
+  `Authorization: Bearer <token>` with that file's token (compared with
+  `hash_equals`, never logged). Otherwise: **403 with an empty body**.
+  Liquid's token and address are refused by `members.php`, and pgacc's by
+  `liquid-members.php`. A missing or invalid secrets file, an empty token
+  or an empty peer list refuse everything.
+- Any error after that: **503 with an empty body** (the log gets only the
+  exception class and code).
+
+#### Data
+
+`200`, `application/json`, ordered by id:
+`[{"id": 123, "lo": 38, "eligible": true, "email": "…", "regions": ["AT130"]}, …]`
+
+- The members and `lo` are those of the view `pgacc_members` (see Member
+  list for pgacc).
+- `eligible`: as `adm1.php`: accredited (profile field 35) on or before
+  today, and paid (field 26, "paid until") or accredited at most 30 days
+  ago (the trial month). "Paid until 31 December" is eligible through 30
+  January. Both fields count only as real calendar dates (`YYYY-MM-DD`).
+- `email`: only when eligible, else `null`. Profile field 12, or field 33
+  when field 12 is `mitglied@piratenpartei.at`. An address that is not
+  valid (PHP's `FILTER_VALIDATE_EMAIL`, at most 254 characters) is sent as
+  `null`; the member is still listed.
+- `regions`: the distinct region codes (NUTS 3, sorted) of the postcodes in
+  fields 4 and 39 (trimmed, exact match), from the table
+  `liquid_region_plz` ([`liquid/liquid_region_plz.sql`](liquid/liquid_region_plz.sql):
+  the postcodes of AT130 and AT221, the regions with units in Liquid);
+  `[]` if none.
+
+The data comes from one prepared `SELECT` on the view `liquid_members`
+([`liquid/liquid_members.sql`](liquid/liquid_members.sql); its comment lists
+the rules), read by the database user `'liquid_members'@'localhost'` with
+`SELECT` on that view only.
+
+#### Secrets file
+
+`/etc/admidio-addons/liquid-members-secrets.php`, outside every document
+root, readable by PHP-FPM only; the listener passes its path as the FastCGI
+parameter `LIQUID_MEMBERS_SECRETS`:
+
+```php
+<?php return [
+    'token' => '<64 hex characters>',  // openssl rand -hex 32, the same as in Liquid
+    'peers' => ['<Liquid internal address>'],
+    'dsn' => 'mysql:unix_socket=/run/mysqld/mysqld.sock;dbname=<admidio db>;charset=utf8mb4',
+    'user' => 'liquid_members',
+    'password' => '<reader password>',
+];
+```
+
+#### Listener
+
+pgacc's listener (see Member list for pgacc), with a second location:
+
+```nginx
+    location = /liquid-members.php {
+        include fastcgi_params;
+        fastcgi_param SCRIPT_FILENAME $document_root/liquid-members.php;
+        fastcgi_param LIQUID_MEMBERS_SECRETS /etc/admidio-addons/liquid-members-secrets.php;
+        fastcgi_pass unix:/run/php/<php-fpm socket>;
+    }
+```
+
+#### Certificates
+
+See [Certificates](#certificates-both-flows). For this flow this side is the callee:
+this side's `/etc/admidio-addons/sync-tls.{crt,key}`; Liquid keeps the
+certificate as `/etc/liquidfeedback/admidio-addons-tls.crt`.
+
+#### Deployment needs
+
+Not in this repository:
+
+1. Create the reader `'liquid_members'@'localhost'` with a random password,
+   then apply, as an administrator in the Admidio database (table prefix
+   `adm`), in this order: `pgacc/pgacc_members.sql`,
+   `liquid/liquid_region_plz.sql`, `liquid/liquid_members.sql`; apply them
+   again after Admidio updates.
+2. The secrets file and the listener location above.
+3. The firewall rules that admit Liquid's address on port 8443.
+
 ### Certificates (both flows)
 
 Each side's own certificate is
@@ -261,9 +363,10 @@ deployment inventory.
 ### Tests
 
 `tests/run.sh` (Docker; MariaDB 12.3 with the Admidio 5.0.17 tables the
-add-ons use, their database users and every `pgacc/*.sql`, and PHP 8.5; runs
-each `tests/*-test.php`; `accsync.php` against a local HTTPS test server with
-self-signed certificates; synthetic users only). GitHub Actions runs it on
+add-ons use, their database users and every `pgacc/*.sql` and `liquid/*.sql`
+in the deployment's order, and PHP 8.5; runs each `tests/*-test.php`;
+`accsync.php` against a local HTTPS test server with self-signed
+certificates; synthetic users only). GitHub Actions runs it on
 every push.
 
 ## Rules
