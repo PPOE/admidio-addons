@@ -5,13 +5,18 @@
 -- postcode table of the old membership system. A postcode may belong to more
 -- than one region; any match counts. Applied by the deployment, as an
 -- administrator, in the Admidio database, before liquid_members.sql; applying
--- it again replaces the rows with exactly these.
+-- it again replaces the rows with exactly these. The character set and
+-- collation are those of the Admidio tables, whatever the database's default
+-- is, so that the join with adm_user_data works.
 
 CREATE TABLE IF NOT EXISTS liquid_region_plz (
     plz CHAR(4) NOT NULL,
     nuts CHAR(5) NOT NULL,
     PRIMARY KEY (plz, nuts)
-) ENGINE = InnoDB;
+)
+ENGINE = InnoDB
+DEFAULT character SET = utf8
+COLLATE = utf8_unicode_ci;
 
 START TRANSACTION;
 DELETE FROM liquid_region_plz;

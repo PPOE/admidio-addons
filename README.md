@@ -293,7 +293,12 @@ the same internal listener as pgacc's `members.php`.
 - `email`: only when eligible, else `null`. Profile field 12, or field 33
   when field 12 is `mitglied@piratenpartei.at`. An address that is not
   valid (PHP's `FILTER_VALIDATE_EMAIL`, at most 254 characters) is sent as
-  `null`; the member is still listed.
+  `null`; the member is still listed. A deliberate difference from
+  `adm1.php`: it used field 33 only if that had more than 4 characters and
+  otherwise kept `mitglied@piratenpartei.at`; here a missing or empty field
+  33 gives `null`, so no account gets that address. The comparison with
+  `mitglied@piratenpartei.at` ignores case and trailing spaces (the
+  collation of the Admidio tables).
 - `regions`: the distinct region codes (NUTS 3, sorted) of the postcodes in
   fields 4 and 39 (trimmed, exact match), from the table
   `liquid_region_plz` ([`liquid/liquid_region_plz.sql`](liquid/liquid_region_plz.sql):

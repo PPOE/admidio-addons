@@ -248,6 +248,19 @@ apply_sql($regionFile);
 apply_sql($regionFile);
 check('regions: the region file applied twice: the same 85 rows', $regionCounts() === ['AT130' => 23, 'AT221' => 62]);
 check('regions: the extra code is gone', $root->query('SELECT regions FROM liquid_members WHERE id = 11')->fetchColumn() === 'AT221');
+// The table keeps the Admidio tables' collation whatever the database's
+// default is (another default would make the join fail).
+[$charset, $collation] = $root->query('SELECT @@character_set_database, @@collation_database')->fetch(PDO::FETCH_NUM);
+$root->exec('DROP TABLE liquid_region_plz');
+$root->exec('ALTER DATABASE admidio CHARACTER SET utf8mb3 COLLATE utf8mb3_general_ci');
+apply_sql($regionFile);
+$root->exec("ALTER DATABASE admidio CHARACTER SET $charset COLLATE $collation");
+try {
+    $joined = $root->query('SELECT regions FROM liquid_members WHERE id = 11')->fetchColumn();
+} catch (PDOException $e) {
+    $joined = null;
+}
+check('regions: another database collation: the join still works', $joined === 'AT221');
 
 // Eligibility (adm1.php): accredited (field 35) on or before today, and
 // paid (field 26) or accredited at most 30 days ago. The database's clock is
