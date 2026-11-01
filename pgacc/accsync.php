@@ -10,9 +10,10 @@
 // down) of the eligible members into the Admidio database, in one
 // transaction. Ids that are not eligible members are skipped; members not in
 // the document are left unchanged. Before that, a deployment check, and the
-// whole document must be valid; otherwise nothing is written. Prints one
-// line per change or skip and a summary; exit status 0 on success, 1 (and a
-// message on stderr) otherwise. --dry-run does the same and rolls back.
+// whole document must be valid; otherwise nothing is written. Prints a
+// summary (counts only: the journal gets no payment data); exit status 0 on
+// success, 1 (and a message on stderr) otherwise. --dry-run (run by hand)
+// does the same, also prints one line per change or skip, and rolls back.
 //
 // The secrets file (outside the document root; --secrets or the environment
 // variable ACCSYNC_SECRETS) returns an array:
@@ -118,9 +119,12 @@ function accsync_fetch($secrets, $timeout = ACCSYNC_TIMEOUT)
 // The payments of $body as a list of ['id', 'amount_cents', 'paid_until'],
 // or null unless the whole document is valid: a JSON list of objects with
 // exactly these keys, ids positive integers and unique, amounts integers
-// >= 0, dates real dates as YYYY-MM-DD.
+// >= 0, dates real dates as YYYY-MM-DD and not later than 31 December of
+// next year (pgacc sends <year>-12-31; field 26 only moves forward, so a
+// date far in the future would stay).
 function accsync_validate($body)
 {
+    $latest = ((int) date('Y') + 1) . '-12-31';
     try {
         $rows = json_decode($body, false, 3, JSON_THROW_ON_ERROR | JSON_BIGINT_AS_STRING);
     } catch (JsonException $e) {
@@ -141,7 +145,7 @@ function accsync_validate($body)
             || !is_int($row['id']) || $row['id'] <= 0 || isset($payments[$row['id']])
             || !is_int($row['amount_cents']) || $row['amount_cents'] < 0
             || !is_string($row['paid_until']) || !preg_match('/^(\d{4})-(\d{2})-(\d{2})$/D', $row['paid_until'], $date)
-            || !checkdate((int) $date[2], (int) $date[3], (int) $date[1])) {
+            || !checkdate((int) $date[2], (int) $date[3], (int) $date[1]) || $row['paid_until'] > $latest) {
             return null;
         }
         $payments[$row['id']] = ['id' => $row['id'], 'amount_cents' => $row['amount_cents'], 'paid_until' => $row['paid_until']];
@@ -162,18 +166,18 @@ function accsync_shown($value)
 }
 
 // Writes $payments in one transaction (rolled back for a dry run) and
-// prints the changes after it; throws (after the rollback, printing nothing)
-// on any database error.
+// prints the summary after it, for a dry run also the changes and skips;
+// throws (after the rollback, printing nothing) on any database error.
 function accsync_apply($pdo, $payments, $dryRun)
 {
     $eligible = $pdo->prepare('SELECT COUNT(*) FROM adm_users u WHERE u.usr_id = ? AND u.usr_valid = 1
         AND EXISTS (SELECT 1 FROM adm_members m WHERE m.mem_usr_id = u.usr_id AND m.mem_rol_id = 2
             AND m.mem_begin <= CURRENT_DATE AND m.mem_end >= CURRENT_DATE)');
-    $current = $pdo->prepare('SELECT usd_value FROM adm_user_data WHERE usd_usr_id = ? AND usd_usf_id = ? FOR UPDATE');
+    $current = $pdo->prepare('SELECT usd_value FROM pgacc_accsync_user_data WHERE usd_usr_id = ? AND usd_usf_id = ? FOR UPDATE');
     $upsert = [
-        26 => $pdo->prepare("INSERT INTO adm_user_data (usd_usr_id, usd_usf_id, usd_value) VALUES (?, 26, ?)
+        26 => $pdo->prepare("INSERT INTO pgacc_accsync_user_data (usd_usr_id, usd_usf_id, usd_value) VALUES (?, 26, ?)
             ON DUPLICATE KEY UPDATE usd_value = GREATEST(COALESCE(usd_value, ''), VALUES(usd_value))"),
-        27 => $pdo->prepare('INSERT INTO adm_user_data (usd_usr_id, usd_usf_id, usd_value) VALUES (?, 27, ?)
+        27 => $pdo->prepare('INSERT INTO pgacc_accsync_user_data (usd_usr_id, usd_usf_id, usd_value) VALUES (?, 27, ?)
             ON DUPLICATE KEY UPDATE usd_value = VALUES(usd_value)'),
     ];
     $value = function ($id, $field) use ($current) {
@@ -218,6 +222,9 @@ function accsync_apply($pdo, $payments, $dryRun)
     } catch (Throwable $e) {
         $pdo->rollBack();
         throw $e;
+    }
+    if (!$dryRun) {
+        $lines = [];
     }
     $lines[] = count($payments) . " payments, $changes changes, $skipped skipped";
     foreach ($lines as $line) {

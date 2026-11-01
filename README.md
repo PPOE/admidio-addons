@@ -88,11 +88,13 @@ The answer is JSON, `[{"id": 123, "amount_cents": 2000, "paid_until": "2026-12-3
    its unique key on `(usd_usr_id, usd_usf_id)`. Otherwise it stops.
 2. **Validate** the whole document: a list of objects with exactly these
    keys, ids positive integers and unique, amounts integers ≥ 0, dates real
-   dates as `YYYY-MM-DD`. `[]` is valid (nothing to do). Anything invalid:
+   dates as `YYYY-MM-DD` and not later than 31 December of next year (pgacc
+   sends `<year>-12-31`; since field 26 only moves forward, a date far in the
+   future would stay). `[]` is valid (nothing to do). Anything invalid:
    nothing is written.
 3. **Write** in one transaction (READ COMMITTED), for each id that is an
    eligible member (`usr_valid = 1` and an active role-2 membership,
-   `mem_begin <= today <= mem_end`; other ids are skipped and logged):
+   `mem_begin <= today <= mem_end`; other ids are skipped and counted):
    - field 26 only if the new date is later:
      `INSERT … ON DUPLICATE KEY UPDATE usd_value = GREATEST(COALESCE(usd_value, ''), VALUES(usd_value))`
      (a later date entered by hand stays);
@@ -100,14 +102,18 @@ The answer is JSON, `[{"id": 123, "amount_cents": 2000, "paid_until": "2026-12-3
      floats), also when it goes down.
 
    Members not in the document are left unchanged. Any SQL error: rollback.
-   The database user `'pgacc_accsync'@'localhost'` has only the column
-   grants of [`pgacc/pgacc_accsync.sql`](pgacc/pgacc_accsync.sql).
+   The database user `'pgacc_accsync'@'localhost'` has only the grants of
+   [`pgacc/pgacc_accsync.sql`](pgacc/pgacc_accsync.sql): column grants for
+   the checks, and the profile values only through the view
+   `pgacc_accsync_user_data`, which holds fields 26 and 27 alone
+   (`WITH CHECK OPTION`; no other profile field can be read or written).
 
-It prints one line per change or skipped id (ids and values only, no names,
-never the token) and a summary, e.g. `user 12 field 26: 2025-12-31 ->
-2026-12-31`. Exit status 0 on success; on any failure 1, a message on stderr
-and nothing written. `--dry-run` does everything, prints the changes with a
-`dry run: ` prefix and rolls back.
+A run prints only a summary with counts, e.g. `12 payments, 11 changes, 5
+skipped`, so the journal gets no payment data. Exit status 0 on success; on
+any failure 1, a message on stderr and nothing written. `--dry-run`, run by
+hand, does everything, also prints one line per change or skipped id (ids
+and values only, no names, never the token; e.g. `dry run: user 12 field 26:
+2025-12-31 -> 2026-12-31`), all with a `dry run: ` prefix, and rolls back.
 
 #### Secrets file
 

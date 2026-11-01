@@ -206,10 +206,13 @@ $payments = [
 $initial = data();
 
 // Validation of the document (no database).
-$valid = '[{"id":1,"amount_cents":2000,"paid_until":"2026-12-31"},{"id":2,"amount_cents":0,"paid_until":"2028-02-29"}]';
-check('valid document', accsync_validate($valid) === [
+$nextYear = (int) date('Y') + 1;
+$valid = '[{"id":1,"amount_cents":2000,"paid_until":"2026-12-31"},{"id":2,"amount_cents":0,"paid_until":"2024-02-29"},'
+    . '{"id":3,"amount_cents":0,"paid_until":"' . $nextYear . '-12-31"}]';
+check('valid document (up to 31 December of next year)', accsync_validate($valid) === [
     ['id' => 1, 'amount_cents' => 2000, 'paid_until' => '2026-12-31'],
-    ['id' => 2, 'amount_cents' => 0, 'paid_until' => '2028-02-29'],
+    ['id' => 2, 'amount_cents' => 0, 'paid_until' => '2024-02-29'],
+    ['id' => 3, 'amount_cents' => 0, 'paid_until' => "$nextYear-12-31"],
 ]);
 check('empty list: valid, no payments', accsync_validate('[]') === []);
 check('empty list with spaces: valid', accsync_validate(" [ ]\n") === []);
@@ -251,6 +254,8 @@ $invalid = [
     'date with newline' => '[{"id":1,"amount_cents":2000,"paid_until":"2026-12-31\n"}]',
     'date as number' => '[{"id":1,"amount_cents":2000,"paid_until":20261231}]',
     'date null' => '[{"id":1,"amount_cents":2000,"paid_until":null}]',
+    'date after next year' => "[$row," . '{"id":2,"amount_cents":2000,"paid_until":"' . ($nextYear + 1) . '-01-01"}]',
+    'date 9999-12-31' => "[$row," . '{"id":2,"amount_cents":2000,"paid_until":"9999-12-31"}]',
 ];
 foreach ($invalid as $name => $body) {
     check("invalid document: $name", accsync_validate($body) === null);
@@ -283,6 +288,7 @@ $refusals = [
     'body over 1 MiB' => accsync($payments, ['url' => 'https://127.0.0.1:' . PORT . '/big']),
     'invalid document' => accsync(array_merge($payments, [['id' => 1, 'amount_cents' => 1, 'paid_until' => '2026-12-31']])),
     'not JSON' => accsync('<html>'),
+    'date after next year' => accsync(array_merge($payments, [['id' => 21, 'amount_cents' => 1, 'paid_until' => '9999-12-31']])),
 ];
 foreach ($refusals as $name => [$status, $stdout, $stderr]) {
     check("refused: $name (exit status, message, no writes)", $status !== 0 && $stdout === '' && $stderr !== '' && data() === $initial);
@@ -321,11 +327,28 @@ foreach ($broken as $name => [$break, $repair]) {
 [$status, $stdout] = accsync([]);
 check('empty list: exit 0, no writes', $status === 0 && changes($stdout) === [] && data() === $initial);
 
-// Dry run: the changes are printed, nothing is written.
+// Dry run (by hand): the changes and skips are printed, nothing is written.
 [$status, $dryStdout] = accsync($payments, [], ['--dry-run']);
 check('dry run: exit 0, nothing written', $status === 0 && data() === $initial);
-check('dry run: the changes are printed as such', count(changes($dryStdout)) === 16
-    && array_filter(changes($dryStdout), fn ($line) => !str_starts_with($line, 'dry run: ')) === []);
+check('dry run: one line per change and skip, ids and values', changes($dryStdout) === array_map(fn ($line) => "dry run: $line", [
+    'user 1 field 26: (none) -> 2026-12-31',
+    'user 1 field 27: (none) -> 20.00',
+    'user 2 field 26: 2025-12-31 -> 2026-12-31',
+    'user 2 field 27: 50.00 -> 25.05',
+    'user 3 field 27: 20.00 -> 0.07',
+    'user 4 field 26: "" -> 2026-12-31',
+    'user 4 field 27: "" -> 0.00',
+    'user 5 field 26: (none) -> 2026-12-31',
+    'user 5 field 27: (none) -> 1234567890.12',
+    'user 6 skipped: not an eligible member',
+    'user 7 skipped: not an eligible member',
+    'user 8 skipped: not an eligible member',
+    'user 9 skipped: not an eligible member',
+    'user 12 field 26: (none) -> 2026-12-31',
+    'user 12 field 27: (none) -> 20.00',
+    'user 13 skipped: not an eligible member',
+]));
+check('dry run: summary line', str_contains($dryStdout, 'dry run: 12 payments, 11 changes, 5 skipped'));
 
 // Rollback: an SQL error on a later member undoes the earlier writes.
 user(20);
@@ -351,30 +374,11 @@ check('role 2 only today: written', ($data['12/26'] ?? null) === '2026-12-31');
 check('ids not in the document: unchanged', $data['10/26'] === '2025-12-31' && $data['10/27'] === '30.00');
 check('equal values: unchanged', $data['11/26'] === '2026-12-31' && $data['11/27'] === '20.00');
 check('names and other fields: unchanged', $data['1/1'] === 'Secret-Lastname' && $data['1/2'] === 'Secret-Firstname');
-check('one line per change and skip, ids and values', changes($stdout) === [
-    'user 1 field 26: (none) -> 2026-12-31',
-    'user 1 field 27: (none) -> 20.00',
-    'user 2 field 26: 2025-12-31 -> 2026-12-31',
-    'user 2 field 27: 50.00 -> 25.05',
-    'user 3 field 27: 20.00 -> 0.07',
-    'user 4 field 26: "" -> 2026-12-31',
-    'user 4 field 27: "" -> 0.00',
-    'user 5 field 26: (none) -> 2026-12-31',
-    'user 5 field 27: (none) -> 1234567890.12',
-    'user 6 skipped: not an eligible member',
-    'user 7 skipped: not an eligible member',
-    'user 8 skipped: not an eligible member',
-    'user 9 skipped: not an eligible member',
-    'user 12 field 26: (none) -> 2026-12-31',
-    'user 12 field 27: (none) -> 20.00',
-    'user 13 skipped: not an eligible member',
-]);
-check('summary line', str_contains($stdout, '12 payments, 11 changes, 5 skipped'));
-check('dry run printed the same changes', changes($dryStdout) === array_map(fn ($line) => "dry run: $line", changes($stdout)));
+check('the journal gets the counts only, no ids or values', $stdout === "12 payments, 11 changes, 5 skipped\n");
 check('nothing on stderr', $stderr === '');
 
 [$status, $stdout] = accsync($payments);
-check('second run: no changes', $status === 0 && array_filter(changes($stdout), fn ($line) => !str_contains($line, 'skipped')) === [] && data() === $data);
+check('second run: no changes', $status === 0 && $stdout === "12 payments, 0 changes, 5 skipped\n" && data() === $data);
 
 // A status line without a reason phrase is accepted.
 [$status, $stdout] = accsync($payments, ['url' => 'https://127.0.0.1:' . PORT . '/noreason']);
@@ -392,8 +396,8 @@ check('secrets file from ACCSYNC_SECRETS', $status === 0);
 // The open transaction holds the row lock until accsync.php is waiting.
 $manual = new PDO(SOCKET_DSN, 'root', 'test-root-password', [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
 $manual->beginTransaction();
-$manual->exec("UPDATE adm_user_data SET usd_value = '2029-12-31' WHERE usd_usr_id = 2 AND usd_usf_id = 26");
-file_put_contents($document, json_encode([['id' => 2, 'amount_cents' => 2505, 'paid_until' => '2028-12-31']]));
+$manual->exec("UPDATE adm_user_data SET usd_value = '" . ($nextYear + 2) . "-12-31' WHERE usd_usr_id = 2 AND usd_usf_id = 26");
+file_put_contents($document, json_encode([['id' => 2, 'amount_cents' => 2505, 'paid_until' => "$nextYear-12-31"]]));
 $process = proc_open(
     [PHP_BINARY, __DIR__ . '/../pgacc/accsync.php', '--secrets=' . secrets_file($secrets)],
     [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
@@ -408,19 +412,36 @@ $manual->commit();
 $stdout = stream_get_contents($pipes[1]);
 $status = proc_close($process);
 check('concurrent later date: the run waited for the lock', $waited);
-check('concurrent later date: it stays, exit 0, no change', $status === 0 && data()['2/26'] === '2029-12-31' && changes($stdout) === []);
+check('concurrent later date: it stays, exit 0, no change', $status === 0 && data()['2/26'] === ($nextYear + 2) . '-12-31' && changes($stdout) === []);
 
 check('no secrets and no names in any output', !str_contains($outputs, TOKEN) && !str_contains($outputs, 'test-writer-password')
     && !str_contains($outputs, 'Secret-'));
 
-// The writer user may not touch anything else.
+// The writer user may not touch anything else: not the other profile
+// fields (field 12 here), neither in the table nor through its view.
+field(1, 12, 'Secret-Street');
 $writer = new PDO(SOCKET_DSN, 'pgacc_accsync', 'test-writer-password', [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+try {
+    $fields = $writer->query('SELECT DISTINCT usd_usf_id FROM pgacc_accsync_user_data ORDER BY 1')->fetchAll(PDO::FETCH_COLUMN);
+} catch (PDOException $e) {
+    $fields = null;
+}
+check('writer sees only fields 26 and 27 through its view', $fields !== null && array_map('intval', $fields) === [26, 27]);
 foreach ([
     'read user names' => 'SELECT usr_login_name FROM adm_users',
     'change users' => 'UPDATE adm_users SET usr_valid = 0',
     'change memberships' => 'UPDATE adm_members SET mem_end = CURRENT_DATE',
     'delete user data' => 'DELETE FROM adm_user_data',
+    'delete user data through the view' => 'DELETE FROM pgacc_accsync_user_data',
     'change profile fields' => "UPDATE adm_user_fields SET usf_type = 'TEXT'",
+    'read field 12' => 'SELECT usd_value FROM adm_user_data WHERE usd_usf_id = 12',
+    'read the user data table' => 'SELECT usd_usr_id, usd_usf_id FROM adm_user_data',
+    'change field 12' => "UPDATE adm_user_data SET usd_value = 'x' WHERE usd_usf_id = 12",
+    'insert field 12' => "INSERT INTO adm_user_data (usd_usr_id, usd_usf_id, usd_value) VALUES (2, 12, 'x')",
+    'insert field 12 through the view' => "INSERT INTO pgacc_accsync_user_data (usd_usr_id, usd_usf_id, usd_value) VALUES (2, 12, 'x')",
+    'upsert field 12 through the view' => "INSERT INTO pgacc_accsync_user_data (usd_usr_id, usd_usf_id, usd_value) VALUES (1, 12, 'x')
+        ON DUPLICATE KEY UPDATE usd_value = VALUES(usd_value)",
+    'move field 27 to field 12 through the view' => 'UPDATE pgacc_accsync_user_data SET usd_usf_id = 12 WHERE usd_usf_id = 27',
 ] as $name => $query) {
     try {
         $writer->exec($query);
@@ -429,6 +450,8 @@ foreach ([
         check("writer cannot $name", true);
     }
 }
+
+check('field 12 unchanged', data()['1/12'] === 'Secret-Street');
 
 foreach ($servers as $server) {
     proc_terminate($server);
