@@ -320,7 +320,7 @@ $root->exec("CREATE TRIGGER fail_20 BEFORE INSERT ON adm_user_data FOR EACH ROW
     IF NEW.usd_usr_id = 20 THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'test'; END IF");
 [$status, $stdout, $stderr] = accsync(array_merge($payments, [['id' => 20, 'amount_cents' => 2000, 'paid_until' => '2026-12-31']]));
 $root->exec('DROP TRIGGER fail_20');
-check('SQL error: non-zero exit, rolled back', $status !== 0 && $stderr !== '' && data() === $initial);
+check('SQL error: non-zero exit, rolled back, no change printed', $status !== 0 && $stdout === '' && $stderr !== '' && data() === $initial);
 
 // The run.
 [$status, $stdout, $stderr] = accsync($payments);

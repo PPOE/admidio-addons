@@ -162,7 +162,8 @@ function accsync_shown($value)
 }
 
 // Writes $payments in one transaction (rolled back for a dry run) and
-// prints the changes; throws (after the rollback) on any database error.
+// prints the changes after it; throws (after the rollback, printing nothing)
+// on any database error.
 function accsync_apply($pdo, $payments, $dryRun)
 {
     $eligible = $pdo->prepare('SELECT COUNT(*) FROM adm_users u WHERE u.usr_id = ? AND u.usr_valid = 1
@@ -182,6 +183,7 @@ function accsync_apply($pdo, $payments, $dryRun)
         return $value === false ? null : $value;
     };
     $prefix = $dryRun ? 'dry run: ' : '';
+    $lines = [];
     $changes = 0;
     $skipped = 0;
     // READ COMMITTED: with MariaDB's snapshot isolation (on by default since
@@ -194,7 +196,7 @@ function accsync_apply($pdo, $payments, $dryRun)
             $id = $payment['id'];
             $eligible->execute([$id]);
             if ((int) $eligible->fetchColumn() === 0) {
-                echo "{$prefix}user $id skipped: not an eligible member\n";
+                $lines[] = "user $id skipped: not an eligible member";
                 $skipped++;
                 continue;
             }
@@ -203,7 +205,7 @@ function accsync_apply($pdo, $payments, $dryRun)
                 $upsert[$field]->execute([$id, $new]);
                 $stored = $value($id, $field);
                 if ($stored !== $old) {
-                    echo "{$prefix}user $id field $field: " . accsync_shown($old) . ' -> ' . accsync_shown($stored) . "\n";
+                    $lines[] = "user $id field $field: " . accsync_shown($old) . ' -> ' . accsync_shown($stored);
                     $changes++;
                 }
             }
@@ -217,7 +219,10 @@ function accsync_apply($pdo, $payments, $dryRun)
         $pdo->rollBack();
         throw $e;
     }
-    echo $prefix . count($payments) . " payments, $changes changes, $skipped skipped\n";
+    $lines[] = count($payments) . " payments, $changes changes, $skipped skipped";
+    foreach ($lines as $line) {
+        echo $prefix . $line . "\n";
+    }
 }
 
 // The run for the command line $argv and the environment $env; returns the
