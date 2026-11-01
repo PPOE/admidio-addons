@@ -10,7 +10,8 @@ The add-ons run on the same server and use the Admidio database.
 | Directory | What | Status |
 |---|---|---|
 | [`mail-alias-sync/`](mail-alias-sync/) | Export of the mail aliases defined by roles | imported as is, not yet ported; not fetched since 2018 at the latest |
-| [`pgacc/`](pgacc/) | Interfaces with the finance application [pgacc](https://github.com/PPOE/pgacc) | imported as is, not yet ported; **in use** |
+| [`pgacc/`](pgacc/) | Interfaces with the finance application [pgacc](https://github.com/PPOE/pgacc) | `adm_names.php` imported as is, **in use**; the new `accsync.php` (below) is not deployed yet |
+| [`tests/`](tests/) | Tests of `accsync.php` (Docker) | |
 
 ### mail-alias-sync
 
@@ -36,30 +37,113 @@ the mail server have presumably not been updated from Admidio since then.
 
 ### pgacc
 
-The interfaces between the membership system and the finance application pgacc,
-imported **unchanged** from `adm_api/` of PPOE/admidio-old (identical to the
-copies deployed on the current membership system):
+The interfaces between the membership system and the finance application pgacc.
 
-- `adm_names.php`: **member list for pgacc.** Prints the active members
-  (role 2) with ID, last and first name (profile fields 1 and 2), the regional
-  organisation role (37–45) and whether the membership fee is paid (field 26,
-  "paid until", in the future), encrypted with Rijndael-256-CBC (`mcrypt`,
-  key `md5($key4)`, IV `md5(md5($key4))`). pgacc's `getusers.php` fetches and
-  decrypts it with the same key (pgacc's `$datakey`). In use.
-- `accsync.php`: **payment status from pgacc.** Fetches pgacc's `mbapi.php`,
-  decrypts it with the same key and writes "paid until" (field 26) and the
-  amount (field 27) into the members' profiles. Run every 10 minutes by
-  `lgfmail.sh`; it currently fails because the membership system cannot reach
-  pgacc.
-- `lgfmail.sh`: the cron wrapper (root, `*/10 * * * *`) that runs
-  `registration.php`, `accsync.php` and `lgfmail.php` (the other two are not
-  imported).
+- `adm_names.php`: **member list for pgacc**, imported **unchanged** from
+  `adm_api/` of [PPOE/admidio-old](https://github.com/PPOE/admidio-old)
+  (identical to the copy deployed on the old membership system). Prints the
+  active members (role 2) with ID, last and first name (profile fields 1 and
+  2), the regional organisation role (37–45) and whether the membership fee is
+  paid (field 26, "paid until", in the future), encrypted with
+  Rijndael-256-CBC (`mcrypt`, key `md5($key4)`, IV `md5(md5($key4))`).
+  pgacc's `getusers.php` fetches and decrypts it with the same key (pgacc's
+  `$datakey`). In use; it uses the removed `mysql_*` and `mcrypt_*` functions
+  and is replaced separately.
+- `accsync.php`: **payment status from pgacc** (sync v2, below). It replaces
+  the old `accsync.php` and its cron wrapper `lgfmail.sh` of PPOE/admidio-old
+  (root, every 10 minutes), which also ran `registration.php` and
+  `lgfmail.php`; those two are **not ported** and not part of this
+  repository.
 
-Like the alias export, they use the removed `mysql_*` and `mcrypt_*`
-functions, read their keys and DB access from `config.php`, and have no
-authentication beyond the shared key. `accsync.php` builds its SQL from the
-decrypted (unauthenticated) data. Porting them, together with the matching
-change in pgacc, is needed before the membership system moves to Admidio 5.
+### Payment status from pgacc (sync v2)
+
+`pgacc/accsync.php` is a command line script, run by a systemd timer every
+10 minutes:
+
+```
+php pgacc/accsync.php [--dry-run] [--secrets=<file>]
+```
+
+1. **Deployment check:** profile fields 1 (`TEXT`, `LAST_NAME`), 2 (`TEXT`,
+   `FIRST_NAME`), 26 (`DATE`, "paid until") and 27 (`DECIMAL`, amount) and
+   roles 2 and 37–45 exist, and `adm_user_data` has its unique key on
+   `(usd_usr_id, usd_usf_id)`. Otherwise it stops.
+2. **Fetch** pgacc's internal endpoint `mbapi.php` with PHP streams:
+   `https://` only, the certificate verified (`verify_peer`,
+   `verify_peer_name`) against pgacc's certificate as the only trust anchor
+   (`cafile`), no redirects, a timeout (20 s), HTTP 200 required,
+   `Authorization: Bearer <token>`. The answer is JSON,
+   `[{"id": 123, "amount_cents": 2000, "paid_until": "2026-12-31"}, …]`.
+3. **Validate** the whole document: a list of objects with exactly these
+   keys, ids positive integers and unique, amounts integers ≥ 0, dates real
+   dates as `YYYY-MM-DD`. `[]` is valid (nothing to do). Anything invalid:
+   nothing is written.
+4. **Write** in one transaction (READ COMMITTED), for each id that is an
+   eligible member (`usr_valid = 1` and an active role-2 membership,
+   `mem_begin <= today <= mem_end`; other ids are skipped and logged):
+   - field 26 only if the new date is later:
+     `INSERT … ON DUPLICATE KEY UPDATE usd_value = GREATEST(COALESCE(usd_value, ''), VALUES(usd_value))`
+     (a later date entered by hand stays);
+   - field 27 to the exact euros from the cents (`2505` → `25.05`; no
+     floats), also when it goes down.
+
+   Members not in the document are left unchanged. Any SQL error: rollback.
+
+It prints one line per change or skipped id (ids and values only, no names,
+never the token) and a summary, e.g. `user 12 field 26: 2025-12-31 ->
+2026-12-31`. Exit status 0 on success; on any failure 1, a message on stderr
+and nothing written. `--dry-run` does everything, prints the changes with a
+`dry run: ` prefix and rolls back.
+
+Deployment (not in this repository):
+
+1. Create the writer `'pgacc_accsync'@'localhost'` with a random password,
+   then apply [`pgacc/pgacc_accsync.sql`](pgacc/pgacc_accsync.sql) (its
+   column grants) as an administrator in the Admidio database (table prefix
+   `adm`); apply it again after Admidio updates.
+2. A secrets file `accsync-secrets.php` outside every document root,
+   readable only by the user the timer runs as, passed with `--secrets` or
+   the environment variable `ACCSYNC_SECRETS`:
+
+   ```php
+   <?php return [
+       'url' => 'https://<pgacc internal address>:8443/mbapi.php',
+       'token' => '<64 hex characters>',  // the same as in pgacc's sync-secrets.php
+       'cafile' => '/etc/<…>/pgacc-sync-tls.crt',  // pgacc's certificate
+       'dsn' => 'mysql:unix_socket=/run/mysqld/mysqld.sock;dbname=<admidio db>;charset=utf8mb4',
+       'user' => 'pgacc_accsync',
+       'password' => '<writer password>',
+   ];
+   ```
+
+3. The systemd units, e.g.:
+
+   ```ini
+   # /etc/systemd/system/pgacc-accsync.service
+   [Unit]
+   Description=Payment status from pgacc into Admidio
+   [Service]
+   Type=oneshot
+   User=<accsync user>
+   ExecStart=/usr/bin/php /srv/admidio-addons/pgacc/accsync.php --secrets=/etc/<…>/accsync-secrets.php
+
+   # /etc/systemd/system/pgacc-accsync.timer
+   [Unit]
+   Description=Payment status from pgacc every 10 minutes
+   [Timer]
+   OnCalendar=*:0/10
+   [Install]
+   WantedBy=timers.target
+   ```
+
+   plus the firewall rule that lets the membership system reach pgacc's
+   internal listener. The log is in the journal
+   (`journalctl -u pgacc-accsync`).
+
+Tests: `tests/run.sh` (Docker; MariaDB 12.3 with the Admidio 5.0.17 tables
+`accsync.php` uses and the grants, PHP 8.5 with a local HTTPS test server and
+self-signed certificates; synthetic users only). GitHub Actions runs it on
+every push.
 
 ## Rules
 
