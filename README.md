@@ -159,7 +159,9 @@ php pgacc/accsync.php [--dry-run] [--secrets=<file>]
 - PHP streams, `https://` only, the certificate verified (`verify_peer`,
   `verify_peer_name`) against pgacc's certificate as the only trust anchor
   (`cafile`; see [Certificates](#certificates-both-flows)), no redirects, a fixed timeout of 20 s for
-  connection, headers and body together, at most 1 MiB, HTTP 200 required.
+  connection, headers and body together, at most 1 MiB, HTTP 200 required,
+  and a `Content-Length` header, if present, must be digits only and equal
+  the body length (a body cut short by an early close is refused).
 - `Authorization: Bearer <token>` with the secrets file's token (never
   logged); pgacc also checks the caller's address against its peer list and
   answers 403 with an empty body otherwise.

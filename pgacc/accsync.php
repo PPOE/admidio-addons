@@ -84,7 +84,9 @@ function accsync_check_deployment($pdo)
 // The body of the endpoint: https only, the certificate verified against the
 // cafile alone, no redirects, a timeout for connection, headers and body
 // together ($timeout seconds; 20 except in the tests; PHP's own stream
-// timeout applies to each read only), at most 1 MiB, HTTP 200 required.
+// timeout applies to each read only), at most 1 MiB, HTTP 200 required, and
+// a Content-Length header, if present, must be digits only and equal to the
+// body length (a body cut short by an early close is refused).
 // Throws otherwise.
 function accsync_fetch($secrets, $timeout = ACCSYNC_TIMEOUT)
 {
@@ -142,6 +144,14 @@ function accsync_fetch($secrets, $timeout = ACCSYNC_TIMEOUT)
     $body = substr($response, $end + 4);
     if (!$complete || strlen($body) > ACCSYNC_MAX_BODY) {
         throw new AccsyncError('fetch failed: incomplete or too large body');
+    }
+    // Every Content-Length header (if any) must be digits only and equal to
+    // the body length; a malformed value fails closed.
+    preg_match_all('/^content-length:[ \t]*([^\r\n]*?)[ \t]*\r?$/im', substr($response, 0, $end), $lengths);
+    foreach ($lengths[1] as $length) {
+        if (!preg_match('/^[0-9]{1,18}$/', $length) || (int) $length !== strlen($body)) {
+            throw new AccsyncError('fetch failed: body length does not match Content-Length');
+        }
     }
     return $body;
 }
