@@ -21,9 +21,14 @@ the other contributors, as recorded in the Git history.
 Imported code
 -------------
 
-mail-alias-sync/adm_mail.php and pgacc/adm_names.php were imported unchanged
-from PPOE/admidio-old, a fork of Admidio that is distributed under the GNU General Public License
-version 2 (it ships Admidio's license text). The files themselves carry no
+The following files were imported unchanged from PPOE/admidio-old, a fork of
+Admidio that is distributed under the GNU General Public License version 2
+(it ships Admidio's license text):
+
+- mail-alias-sync/adm_mail.php
+- pgacc/adm_names.php
+
+The files themselves carry no
 license statement of their own; they are included here under the same terms.
 Their copyright remains with their author, as recorded in the history of
 PPOE/admidio-old.

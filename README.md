@@ -11,7 +11,7 @@ The add-ons run on the same server and use the Admidio database.
 |---|---|---|
 | [`mail-alias-sync/`](mail-alias-sync/) | Export of the mail aliases defined by roles | imported as is, not yet ported; not fetched since 2018 at the latest |
 | [`pgacc/`](pgacc/) | Interfaces with the finance application [pgacc](https://github.com/PPOE/pgacc) | `adm_names.php` imported as is, **in use**; the new `accsync.php` (below) is not deployed yet |
-| [`tests/`](tests/) | Tests of `accsync.php` (Docker) | |
+| [`tests/`](tests/) | Tests of the add-ons (Docker) | |
 
 ### mail-alias-sync
 
@@ -57,28 +57,40 @@ The interfaces between the membership system and the finance application pgacc.
 
 ### Payment status from pgacc (sync v2)
 
-`pgacc/accsync.php` is a command line script, run by a systemd timer every
-10 minutes:
+Replaces the old `accsync.php` and `lgfmail.sh`. `pgacc/accsync.php` is a
+command line script, run by a systemd timer every 10 minutes, that fetches
+the payments from pgacc's internal listener and writes them into the members'
+profiles:
 
 ```
 php pgacc/accsync.php [--dry-run] [--secrets=<file>]
 ```
 
-1. **Deployment check:** profile fields 1 (`TEXT`, `LAST_NAME`), 2 (`TEXT`,
-   `FIRST_NAME`), 26 (`DATE`, "paid until") and 27 (`DECIMAL`, amount) and
-   roles 2 and 37–45 exist, and `adm_user_data` has its unique key on
-   `(usd_usr_id, usd_usf_id)`. Otherwise it stops.
-2. **Fetch** pgacc's internal endpoint `mbapi.php` with PHP streams:
-   `https://` only, the certificate verified (`verify_peer`,
-   `verify_peer_name`) against pgacc's certificate as the only trust anchor
-   (`cafile`), no redirects, a timeout (20 s), HTTP 200 required,
-   `Authorization: Bearer <token>`. The answer is JSON,
-   `[{"id": 123, "amount_cents": 2000, "paid_until": "2026-12-31"}, …]`.
-3. **Validate** the whole document: a list of objects with exactly these
+#### Transport and authentication
+
+- Caller: this side (`accsync.php`). Callee: pgacc,
+  `https://<pgacc internal address>:8443/mbapi.php`.
+- PHP streams, `https://` only, the certificate verified (`verify_peer`,
+  `verify_peer_name`) against pgacc's certificate as the only trust anchor
+  (`cafile`; see Certificates), no redirects, a fixed timeout of 20 s, at
+  most 1 MiB, HTTP 200 required.
+- `Authorization: Bearer <token>` with the secrets file's token (never
+  logged); pgacc also checks the caller's address against its peer list and
+  answers 403 with an empty body otherwise.
+
+#### Data
+
+The answer is JSON, `[{"id": 123, "amount_cents": 2000, "paid_until": "2026-12-31"}, …]`.
+
+1. **Deployment check** (before the fetch): profile fields 1 (`TEXT`,
+   `LAST_NAME`), 2 (`TEXT`, `FIRST_NAME`), 26 (`DATE`, "paid until") and 27
+   (`DECIMAL`, amount) and roles 2 and 37–45 exist, and `adm_user_data` has
+   its unique key on `(usd_usr_id, usd_usf_id)`. Otherwise it stops.
+2. **Validate** the whole document: a list of objects with exactly these
    keys, ids positive integers and unique, amounts integers ≥ 0, dates real
    dates as `YYYY-MM-DD`. `[]` is valid (nothing to do). Anything invalid:
    nothing is written.
-4. **Write** in one transaction (READ COMMITTED), for each id that is an
+3. **Write** in one transaction (READ COMMITTED), for each id that is an
    eligible member (`usr_valid = 1` and an active role-2 membership,
    `mem_begin <= today <= mem_end`; other ids are skipped and logged):
    - field 26 only if the new date is later:
@@ -88,6 +100,8 @@ php pgacc/accsync.php [--dry-run] [--secrets=<file>]
      floats), also when it goes down.
 
    Members not in the document are left unchanged. Any SQL error: rollback.
+   The database user `'pgacc_accsync'@'localhost'` has only the column
+   grants of [`pgacc/pgacc_accsync.sql`](pgacc/pgacc_accsync.sql).
 
 It prints one line per change or skipped id (ids and values only, no names,
 never the token) and a summary, e.g. `user 12 field 26: 2025-12-31 ->
@@ -95,55 +109,73 @@ never the token) and a summary, e.g. `user 12 field 26: 2025-12-31 ->
 and nothing written. `--dry-run` does everything, prints the changes with a
 `dry run: ` prefix and rolls back.
 
-Deployment (not in this repository):
+#### Secrets file
+
+`/etc/admidio-addons/accsync-secrets.php`, outside every document root,
+readable only by the user the timer runs as, passed with `--secrets` or the
+environment variable `ACCSYNC_SECRETS`:
+
+```php
+<?php return [
+    'url' => 'https://<pgacc internal address>:8443/mbapi.php',
+    'token' => '<64 hex characters>',  // openssl rand -hex 32, the same as in pgacc
+    'cafile' => '/etc/admidio-addons/pgacc-tls.crt',  // pgacc's certificate
+    'dsn' => 'mysql:unix_socket=/run/mysqld/mysqld.sock;dbname=<admidio db>;charset=utf8mb4',
+    'user' => 'pgacc_accsync',
+    'password' => '<writer password>',
+];
+```
+
+#### Listener
+
+None on this side for this flow: `accsync.php` calls pgacc's internal
+listener. It runs from systemd units, e.g.:
+
+```ini
+# /etc/systemd/system/pgacc-accsync.service
+[Unit]
+Description=Payment status from pgacc into Admidio
+[Service]
+Type=oneshot
+User=<accsync user>
+ExecStart=/usr/bin/php /srv/admidio-addons/pgacc/accsync.php --secrets=/etc/admidio-addons/accsync-secrets.php
+
+# /etc/systemd/system/pgacc-accsync.timer
+[Unit]
+Description=Payment status from pgacc every 10 minutes
+[Timer]
+OnCalendar=*:0/10
+[Install]
+WantedBy=timers.target
+```
+
+The log is in the journal (`journalctl -u pgacc-accsync`).
+
+#### Certificates
+
+Each side's own certificate is `/etc/<app>/sync-tls.{crt,key}`; the peer's
+certificate is `/etc/<app>/<peer>-tls.crt`. Each certificate is self-signed
+by the callee (SAN = the address in the caller's URL) and handed to the
+caller through the deployment inventory. For this flow: pgacc's
+`/etc/pgacc/sync-tls.{crt,key}`; this side keeps the certificate as
+`/etc/admidio-addons/pgacc-tls.crt` (the `cafile`).
+
+#### Deployment needs
+
+Not in this repository:
 
 1. Create the writer `'pgacc_accsync'@'localhost'` with a random password,
-   then apply [`pgacc/pgacc_accsync.sql`](pgacc/pgacc_accsync.sql) (its
-   column grants) as an administrator in the Admidio database (table prefix
-   `adm`); apply it again after Admidio updates.
-2. A secrets file `accsync-secrets.php` outside every document root,
-   readable only by the user the timer runs as, passed with `--secrets` or
-   the environment variable `ACCSYNC_SECRETS`:
-
-   ```php
-   <?php return [
-       'url' => 'https://<pgacc internal address>:8443/mbapi.php',
-       'token' => '<64 hex characters>',  // the same as in pgacc's sync-secrets.php
-       'cafile' => '/etc/<…>/pgacc-sync-tls.crt',  // pgacc's certificate
-       'dsn' => 'mysql:unix_socket=/run/mysqld/mysqld.sock;dbname=<admidio db>;charset=utf8mb4',
-       'user' => 'pgacc_accsync',
-       'password' => '<writer password>',
-   ];
-   ```
-
-3. The systemd units, e.g.:
-
-   ```ini
-   # /etc/systemd/system/pgacc-accsync.service
-   [Unit]
-   Description=Payment status from pgacc into Admidio
-   [Service]
-   Type=oneshot
-   User=<accsync user>
-   ExecStart=/usr/bin/php /srv/admidio-addons/pgacc/accsync.php --secrets=/etc/<…>/accsync-secrets.php
-
-   # /etc/systemd/system/pgacc-accsync.timer
-   [Unit]
-   Description=Payment status from pgacc every 10 minutes
-   [Timer]
-   OnCalendar=*:0/10
-   [Install]
-   WantedBy=timers.target
-   ```
-
-   plus the firewall rule that lets the membership system reach pgacc's
-   internal listener. The log is in the journal
-   (`journalctl -u pgacc-accsync`).
+   then apply `pgacc/pgacc_accsync.sql` as an administrator in the Admidio
+   database (table prefix `adm`); apply it again after Admidio updates.
+2. The secrets file, pgacc's certificate and the systemd units above.
+3. The firewall rule that lets this side reach pgacc's internal listener on
+   port 8443.
 
 Tests: `tests/run.sh` (Docker; MariaDB 12.3 with the Admidio 5.0.17 tables
-`accsync.php` uses and the grants, PHP 8.5 with a local HTTPS test server and
-self-signed certificates; synthetic users only). GitHub Actions runs it on
-every push.
+the add-ons use, their database users and every `pgacc/*.sql`, and PHP 8.5;
+runs each `tests/*-test.php`; `accsync.php` against a local HTTPS test server
+with self-signed certificates; synthetic users only). GitHub Actions runs it
+on every push.
 
 ## Rules
 

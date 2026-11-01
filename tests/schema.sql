@@ -1,10 +1,11 @@
 -- SPDX-License-Identifier: GPL-2.0-only
 --
--- Test schema: the five Admidio 5.0.17 tables that accsync.php reads or
--- writes, copied unchanged (prefix "adm") from install/db_scripts/db.sql of
--- the Admidio 5.0.17 release (copyright The Admidio Team, GPL-2.0-only).
+-- Test schema: the five Admidio 5.0.17 tables that the add-ons read or
+-- write (adm_members, adm_roles, adm_user_data, adm_user_fields,
+-- adm_users), copied unchanged (prefix "adm") from install/db_scripts/db.sql
+-- of the Admidio 5.0.17 release (copyright The Admidio Team, GPL-2.0-only).
 -- Foreign keys are left out, so the tests need no organisations or
--- categories. No data.
+-- categories. No data: each test resets and fills the tables itself.
 
 CREATE TABLE adm_members
 (

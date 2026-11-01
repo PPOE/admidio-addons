@@ -117,6 +117,10 @@ function changes($output)
 
 // Synthetic data. Dates relative to the database's today.
 $root = new PDO(SOCKET_DSN, 'root', 'test-root-password', [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+// The database is shared with the other tests: start from empty tables.
+foreach (['adm_users', 'adm_members', 'adm_user_data', 'adm_user_fields', 'adm_roles'] as $table) {
+    $root->exec("DELETE FROM $table");
+}
 $today = new DateTimeImmutable($root->query('SELECT CURRENT_DATE')->fetchColumn());
 function day($offset)
 {
@@ -275,12 +279,21 @@ $refusals = [
     'certificate not the cafile' => accsync($payments, ['cafile' => $otherCrt]),
     'certificate for another name' => accsync($payments, ['url' => 'https://127.0.0.1:' . OTHER_NAME_PORT . '/mbapi.php']),
     'nothing listening' => accsync($payments, ['url' => 'https://127.0.0.1:9/mbapi.php']),
-    'timeout' => accsync($payments, ['url' => 'https://127.0.0.1:' . PORT . '/slow', 'timeout' => 1]),
+    'status 2000' => accsync($payments, ['url' => 'https://127.0.0.1:' . PORT . '/status2000']),
+    'body over 1 MiB' => accsync($payments, ['url' => 'https://127.0.0.1:' . PORT . '/big']),
     'invalid document' => accsync(array_merge($payments, [['id' => 1, 'amount_cents' => 1, 'paid_until' => '2026-12-31']])),
     'not JSON' => accsync('<html>'),
 ];
 foreach ($refusals as $name => [$status, $stdout, $stderr]) {
     check("refused: $name (exit status, message, no writes)", $status !== 0 && $stdout === '' && $stderr !== '' && data() === $initial);
+}
+
+// The timeout (20 s; shorter here) applies to the fetch.
+try {
+    accsync_fetch(['url' => 'https://127.0.0.1:' . PORT . '/slow'] + $secrets, 1);
+    check('timeout: the fetch fails', false);
+} catch (AccsyncError $e) {
+    check('timeout: the fetch fails', true);
 }
 
 // Deployment check: each broken expectation stops the run before the fetch.
@@ -362,6 +375,14 @@ check('nothing on stderr', $stderr === '');
 
 [$status, $stdout] = accsync($payments);
 check('second run: no changes', $status === 0 && array_filter(changes($stdout), fn ($line) => !str_contains($line, 'skipped')) === [] && data() === $data);
+
+// A status line without a reason phrase is accepted.
+[$status, $stdout] = accsync($payments, ['url' => 'https://127.0.0.1:' . PORT . '/noreason']);
+check('status line "HTTP/1.0 200": accepted', $status === 0 && data() === $data);
+
+// The timeout is fixed: a timeout key in the secrets file is ignored.
+[$status] = accsync([], ['url' => 'https://127.0.0.1:' . PORT . '/slow', 'timeout' => 1]);
+check('timeout key in the secrets file: ignored', $status === 0);
 
 // The environment variable instead of the option.
 [$status] = accsync([], [], [], ['ACCSYNC_SECRETS' => secrets_file($secrets)]);

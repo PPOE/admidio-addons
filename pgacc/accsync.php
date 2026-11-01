@@ -19,9 +19,10 @@
 // ['url' => 'https://<pgacc internal address>:<port>/mbapi.php',
 //  'token' => '<hex>', 'cafile' => '<pgacc certificate>',
 //  'dsn' => 'mysql:unix_socket=...;dbname=...;charset=utf8mb4',
-//  'user' => 'pgacc_accsync', 'password' => '...', 'timeout' => 20 (optional)].
+//  'user' => 'pgacc_accsync', 'password' => '...'].
 
 const ACCSYNC_MAX_BODY = 1048576;
+const ACCSYNC_TIMEOUT = 20;
 
 class AccsyncError extends Exception
 {
@@ -79,16 +80,15 @@ function accsync_check_deployment($pdo)
 }
 
 // The body of the endpoint: https only, the certificate verified against the
-// cafile alone, no redirects, HTTP 200 required. Throws otherwise.
-function accsync_fetch($secrets)
+// cafile alone, no redirects, a timeout ($timeout seconds; 20 except in the
+// tests), at most 1 MiB, HTTP 200 required. Throws otherwise.
+function accsync_fetch($secrets, $timeout = ACCSYNC_TIMEOUT)
 {
     $context = stream_context_create([
         'http' => [
-            'method' => 'GET',
             'header' => 'Authorization: Bearer ' . $secrets['token'],
             'follow_location' => 0,
-            'max_redirects' => 0,
-            'timeout' => $secrets['timeout'] ?? 20,
+            'timeout' => $timeout,
             'ignore_errors' => true,
         ],
         'ssl' => [
@@ -106,7 +106,7 @@ function accsync_fetch($secrets)
     $meta = stream_get_meta_data($stream);
     fclose($stream);
     $status = $meta['wrapper_data'][0] ?? '';
-    if (!preg_match('#^HTTP/\d(\.\d)? 200 #', $status)) {
+    if (!preg_match('#^HTTP/\S+ 200( |$)#', $status)) {
         throw new AccsyncError('fetch failed: ' . ($status === '' ? 'no status' : $status));
     }
     if ($body === false || $meta['timed_out'] || strlen($body) > ACCSYNC_MAX_BODY) {
