@@ -149,14 +149,15 @@ function apply_sql($file)
 $regionCounts = function () use ($root) {
     return $root->query('SELECT nuts, COUNT(*) FROM liquid_region_plz GROUP BY nuts ORDER BY nuts')->fetchAll(PDO::FETCH_KEY_PAIR);
 };
-check('regions: 140 postcodes for AT130 and 82 for AT221', $regionCounts() === ['AT130' => 140, 'AT221' => 82]);
+check('regions: 140 postcodes for AT130 and 17 for AT221 (the city of Graz)', $regionCounts() === ['AT130' => 140, 'AT221' => 17]);
 $regionsOf = function ($plz) use ($root) {
     $query = $root->prepare('SELECT nuts FROM liquid_region_plz WHERE plz = ? ORDER BY nuts');
     $query->execute([$plz]);
     return $query->fetchAll(PDO::FETCH_COLUMN);
 };
 check('regions: 8053 (Graz) in AT221', $regionsOf('8053') === ['AT221']);
-check('regions: 8561 (shared with AT225) in AT221', $regionsOf('8561') === ['AT221']);
+check('regions: 8073 (shared with Feldkirchen and Seiersberg-Pirka) in AT221', $regionsOf('8073') === ['AT221']);
+check('regions: 8061 (Graz-Umgebung, not the city) in none', $regionsOf('8061') === []);
 check('regions: 9371 (Carinthia) in none', $regionsOf('9371') === []);
 
 // The view, with synthetic users. Dates relative to the database's today.
@@ -261,7 +262,7 @@ $root->exec("INSERT INTO liquid_region_plz (plz, nuts) VALUES ('8010', 'AT999')"
 check('regions: a postcode with two codes: both', $root->query('SELECT regions FROM liquid_members WHERE id = 11')->fetchColumn() === 'AT221,AT999');
 apply_sql($regionFile);
 apply_sql($regionFile);
-check('regions: the region file applied twice: the same 222 rows', $regionCounts() === ['AT130' => 140, 'AT221' => 82]);
+check('regions: the region file applied twice: the same 157 rows', $regionCounts() === ['AT130' => 140, 'AT221' => 17]);
 check('regions: the extra code is gone', $root->query('SELECT regions FROM liquid_members WHERE id = 11')->fetchColumn() === 'AT221');
 // The table keeps the Admidio tables' collation whatever the database's
 // default is (another default would make the join fail).

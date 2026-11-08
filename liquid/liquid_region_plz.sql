@@ -1,25 +1,27 @@
 -- SPDX-License-Identifier: GPL-2.0-only
 --
--- The postcodes of the regions that have units in Liquid (liquid_members.sql):
--- AT130 (Wien, 140 postcodes) and AT221 (Graz: the city of Graz and the
--- district Graz-Umgebung, 82 postcodes). A postcode may belong to more than
--- one region; any match counts. Sources, both fetched on 2026-11-08:
--- - Eurostat GISCO TERCET, postcodes to NUTS 2024, Austria, file
---   pc2025_AT_NUTS-2024_v1.0.csv,
+-- The postcodes of the regions that have units in Liquid (liquid_members.sql),
+-- under the region keys of the Liquid deployment's region map:
+-- - AT130: Wien (the city is the whole NUTS-3 region AT130), 140 postcodes:
+--   all rows for AT130 of Eurostat GISCO TERCET, postcodes to NUTS 2024,
+--   Austria, file pc2025_AT_NUTS-2024_v1.0.csv,
 --   https://gisco-services.ec.europa.eu/tercet/NUTS-2024/pc2025_AT_NUTS-2024_v1.0.zip
---   All its rows for AT130 and AT221, including the postcodes of post office
---   boxes and large recipients. TERCET gives each postcode exactly one
---   region, so it leaves out postcodes shared with a neighbouring region.
--- - Statistik Austria, "Gemeinden mit Ortschaften und Postleitzahlen",
---   Gebietsstand 2026, created 05.11.2026,
+--   (including the postcodes of post office boxes and large recipients).
+-- - AT221: here the city of Graz only (Gemeinde 60101), NOT all of NUTS
+--   AT221, which also has the district Graz-Umgebung. 17 postcodes: every
+--   postcode of an Ortschaft of Graz in Statistik Austria, "Gemeinden mit
+--   Ortschaften und Postleitzahlen", Gebietsstand 2026, created 05.11.2026,
 --   https://www.statistik.at/verzeichnis/reglisten/ortsliste.csv
---   Added for AT221: every postcode of an Ortschaft in Graz (60101) or in the
---   district Graz-Umgebung (606), even if TERCET puts it in another region.
--- Applied by the deployment, as an administrator, in the Admidio database,
--- before liquid_members.sql; applying it again replaces the rows with exactly
--- these. The character set and collation are those of the Admidio tables,
--- whatever the database's default is, so that the join with adm_user_data
--- works.
+--   (the same 17 as the Bezirk "Graz(Stadt)" in the RTR postcode list,
+--   https://data.rtr.at/api/v1/tables/plz.csv). Postcodes shared with a
+--   neighbouring Gemeinde are included (8010, 8044 to 8047, 8051, 8052,
+--   8054, 8055, 8073, 8074).
+-- All sources fetched on 2026-11-08. A postcode may belong to more than one
+-- region; any match counts. Applied by the deployment, as an administrator,
+-- in the Admidio database, before liquid_members.sql; applying it again
+-- replaces the rows with exactly these. The character set and collation are
+-- those of the Admidio tables, whatever the database's default is, so that
+-- the join with adm_user_data works.
 
 CREATE TABLE IF NOT EXISTS liquid_region_plz (
     plz CHAR(4) NOT NULL,
@@ -173,21 +175,8 @@ INSERT INTO liquid_region_plz (nuts, plz) VALUES
     ('AT130', '1504'),
     ('AT130', '1600'),
     ('AT130', '1610'),
-    ('AT221', '8000'),
-    ('AT221', '8006'),
     ('AT221', '8010'),
-    ('AT221', '8011'),
-    ('AT221', '8012'),
-    ('AT221', '8014'),
-    ('AT221', '8015'),
-    ('AT221', '8016'),
-    ('AT221', '8017'),
-    ('AT221', '8019'),
     ('AT221', '8020'),
-    ('AT221', '8021'),
-    ('AT221', '8025'),
-    ('AT221', '8026'),
-    ('AT221', '8035'),
     ('AT221', '8036'),
     ('AT221', '8041'),
     ('AT221', '8042'),
@@ -196,63 +185,11 @@ INSERT INTO liquid_region_plz (nuts, plz) VALUES
     ('AT221', '8045'),
     ('AT221', '8046'),
     ('AT221', '8047'),
-    ('AT221', '8049'),
-    ('AT221', '8050'),
     ('AT221', '8051'),
     ('AT221', '8052'),
     ('AT221', '8053'),
     ('AT221', '8054'),
     ('AT221', '8055'),
-    ('AT221', '8056'),
-    ('AT221', '8057'),
-    ('AT221', '8061'),
-    ('AT221', '8062'),
-    ('AT221', '8063'),
-    ('AT221', '8071'),
-    ('AT221', '8072'),
     ('AT221', '8073'),
-    ('AT221', '8074'),
-    ('AT221', '8075'),
-    ('AT221', '8076'),
-    ('AT221', '8077'),
-    ('AT221', '8081'),
-    ('AT221', '8082'),
-    ('AT221', '8101'),
-    ('AT221', '8102'),
-    ('AT221', '8103'),
-    ('AT221', '8111'),
-    ('AT221', '8112'),
-    ('AT221', '8113'),
-    ('AT221', '8114'),
-    ('AT221', '8120'),
-    ('AT221', '8121'),
-    ('AT221', '8122'),
-    ('AT221', '8124'),
-    ('AT221', '8130'),
-    ('AT221', '8131'),
-    ('AT221', '8141'),
-    ('AT221', '8142'),
-    ('AT221', '8143'),
-    ('AT221', '8144'),
-    ('AT221', '8151'),
-    ('AT221', '8152'),
-    ('AT221', '8153'),
-    ('AT221', '8160'),
-    ('AT221', '8163'),
-    ('AT221', '8181'),
-    ('AT221', '8200'),
-    ('AT221', '8301'),
-    ('AT221', '8302'),
-    ('AT221', '8322'),
-    ('AT221', '8323'),
-    ('AT221', '8324'),
-    ('AT221', '8401'),
-    ('AT221', '8402'),
-    ('AT221', '8404'),
-    ('AT221', '8410'),
-    ('AT221', '8411'),
-    ('AT221', '8501'),
-    ('AT221', '8503'),
-    ('AT221', '8504'),
-    ('AT221', '8561');
+    ('AT221', '8074');
 COMMIT;
